@@ -14,15 +14,42 @@ Do not expose it directly to the internet without TLS and a reverse proxy.
 
 ## Authentication
 
-- Passwords hashed with **Argon2id** (memory-hard; resistant to GPU cracking).
+- Passwords hashed with **Argon2id** (m=64 MiB, t=3, p=4 — memory-hard, resistant to GPU
+  cracking). A login for an address with no account still performs a hash, so response
+  time cannot be used to enumerate accounts.
 - No open registration. Accounts exist only via an **admin-issued invite code**; the very
-  first admin comes from `BOOTSTRAP_INVITE_CODE`, which is consumed once.
+  first admin comes from `BOOTSTRAP_INVITE_CODE`, which is materialised into an ordinary
+  invite row and consumed once. Only the SHA-256 of a code is stored — a lost code is
+  re-issued, never recovered.
 - Short-lived access JWT in an **httpOnly, SameSite=Strict** cookie, plus a rotating
-  refresh token stored **hashed** in the DB and revocable per device. Reuse of a rotated
+  refresh token stored **HMAC'd** in the DB (under `JWT_REFRESH_SECRET`, so a leaked
+  database cannot be attacked offline) and revocable per device. Reuse of a rotated
   refresh token invalidates the whole family.
+- Authorisation is re-read from the database on every request, so a **suspension or role
+  change takes effect immediately** rather than when the access token expires.
 - **CSRF** double-submit token on every mutating request.
-- **Rate limiting with backoff** on login and vault unlock.
-- Optional **TOTP 2FA** with recovery codes.
+- **Rate limiting with exponential backoff** on login — keyed by email *and* by client
+  address, so neither one account nor one host can be ground down — and on invite
+  redemption. Vault unlock gets the same treatment in P4.
+- Optional **TOTP 2FA** with ten single-use recovery codes. The shared secret is
+  encrypted at rest under `SECRET_ENCRYPTION_KEY`, and 2FA is only switched on once a
+  live code confirms enrolment, so an abandoned enrolment cannot lock anyone out.
+- Changing a password **revokes every session**, including the one that made the change.
+
+## Two kinds of encryption at rest
+
+These are easy to confuse, and the difference is the whole security story:
+
+| | `SECRET_ENCRYPTION_KEY` | The vault |
+| --- | --- | --- |
+| Protects | TOTP seeds, later provider credentials | Bank logins, policy numbers, instructions for heirs |
+| Key lives | In the server's environment | Only in the owner's browser |
+| Server can read it | Yes, by design | **No, and there is no code path that could** |
+| Defends against | A leaked `networth.db` or backup file | A leaked database *and* the server operator |
+
+The first is ordinary at-rest encryption: it makes a stolen database file useless without
+the environment, but someone with the running host has the key. The second is the real
+guarantee, and it is described next.
 
 ## The vault: zero-knowledge
 

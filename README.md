@@ -58,12 +58,17 @@ cd networth-tracker
 npm install
 
 cp .env.example .env
-# Generate the two JWT secrets and set a bootstrap invite code:
+# Generate three distinct secrets and set a bootstrap invite code:
 openssl rand -base64 48   # JWT_ACCESS_SECRET
 openssl rand -base64 48   # JWT_REFRESH_SECRET
+openssl rand -base64 48   # SECRET_ENCRYPTION_KEY
 
 npm run dev
 ```
+
+The API creates and migrates `data/networth.db` on first boot. `SECRET_ENCRYPTION_KEY`
+encrypts server-readable secrets at rest (today, TOTP seeds) — **back it up with the
+database**, because rotating it makes every enrolled second factor unreadable.
 
 Open http://localhost:5173 and register the first admin account with the
 `BOOTSTRAP_INVITE_CODE` you set. Every account after that is created by an admin-issued
@@ -76,7 +81,28 @@ npm run build
 npm start          # Express serves the API and the built web bundle on one port
 ```
 
-Put it behind a reverse proxy with TLS and set `COOKIE_SECURE=true`.
+Put it behind a reverse proxy with TLS and set `COOKIE_SECURE=true`. In production the
+API refuses to start with placeholder secrets or with `COOKIE_SECURE=false`.
+
+## API
+
+All routes are under `/api`. Sessions are cookie-based; mutating requests must echo the
+`nt_csrf` cookie in an `x-csrf-token` header.
+
+| Method | Route | Purpose |
+| ------ | ----- | ------- |
+| `GET` | `/auth/bootstrap` | Whether this instance still needs its first account |
+| `POST` | `/auth/register` | Redeem an invite code and create an account |
+| `POST` | `/auth/login` | Sign in; answers `totp_required` when 2FA is enabled |
+| `POST` | `/auth/refresh` | Rotate the refresh token and reissue an access token |
+| `POST` | `/auth/logout` | Revoke this session family and clear cookies |
+| `GET` | `/auth/me` | The signed-in user |
+| `POST` | `/auth/password` | Change password; signs out every device |
+| `GET`/`DELETE` | `/auth/sessions[/:id]` | List signed-in devices; revoke one |
+| `POST` | `/auth/2fa/enrol`, `/enrol/confirm`, `/disable` | TOTP enrolment and removal |
+| `GET`/`PATCH` | `/admin/users[/:id]` | List accounts; suspend, reactivate, change role |
+| `POST` | `/admin/users/:id/revoke-sessions` | Sign a user out everywhere |
+| `GET`/`POST`/`DELETE` | `/admin/invites[/:id]` | Issue, list and withdraw invites |
 
 ## Backup and restore
 

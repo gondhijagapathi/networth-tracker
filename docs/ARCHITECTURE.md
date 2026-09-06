@@ -28,8 +28,15 @@ always revalidates.
 
 - One SQLite file, WAL mode, `foreign_keys = ON`, `synchronous = NORMAL`.
 - Drizzle ORM for typed queries. `drizzle-kit` generates plain SQL migrations that are
-  committed to `apps/api/migrations/` and applied on boot — no magic, and the schema
-  history is readable in a diff.
+  committed to `apps/api/migrations/` and applied on boot by `src/db/migrate.ts` — no
+  magic, and the schema history is readable in a diff.
+- **`drizzle-kit` is not a dependency.** `npm run db:generate` fetches it on demand
+  (`npx drizzle-kit@<pinned>`) because its dependency tree still carries an
+  advisory-flagged `esbuild` that npm will not let an override reach. Only the generated
+  SQL is committed, so a fresh clone installs nothing extra and `npm audit` stays clean.
+  The cost is that `schema.ts` and the SQL could drift, so
+  `src/db/__tests__/schema.test.ts` builds a database from the migrations alone and
+  compares its real columns, nullability and keys against the Drizzle definitions.
 - **Money is integer paise** in `BIGINT` columns. Never floats: `0.1 + 0.2` problems in a
   net worth tracker are unacceptable. Conversion and formatting live in
   `packages/shared/src/money.ts` and happen only at the edges.
@@ -45,6 +52,10 @@ filter cannot leak another household's data.
 ```
 request → auth middleware (who) → scope resolver (what they may see) → repository → SQLite
 ```
+
+The auth middleware verifies the access JWT and then re-reads the user row, so role
+changes and suspensions take effect on the very next request rather than whenever the
+token happens to expire. One indexed primary-key lookup buys that.
 
 The scope resolver reads `access_grants`, which is the union of:
 
@@ -97,3 +108,27 @@ apps/web/src/
   features/   feature-local state + hooks (assets, vault, nominees)
   lib/        api client, crypto, formatting
 ```
+
+## Sessions
+
+Two credentials with deliberately different designs:
+
+| | Access token | Refresh token |
+| --- | --- | --- |
+| Form | Signed JWT (HS256) | Opaque 256-bit random string |
+| Lifetime | `ACCESS_TOKEN_TTL` (15m) | `REFRESH_TOKEN_TTL` (30d) |
+| Stored | Nowhere — stateless | HMAC only, in `refresh_tokens` |
+| Cookie | `nt_access`, httpOnly, path `/` | `nt_refresh`, httpOnly, path `/api/auth` |
+
+A JWT on the hot path keeps ordinary requests to one signature check. The refresh token
+is *not* a JWT precisely because it must be revocable, and a self-validating token cannot
+be taken back.
+
+One login opens a **family**. Every refresh spends the current token and issues its
+successor inside that family, so a captured token is useful only until the real client
+next refreshes. Presenting an already-rotated token means either replay or a leaked
+database — indistinguishable, and both answered the same way: the whole family is revoked
+and that device chain must sign in again.
+
+The family id is also the session id in the "signed-in devices" list, so a month-old
+session shows as one device rather than the hundreds of token rows rotation has produced.

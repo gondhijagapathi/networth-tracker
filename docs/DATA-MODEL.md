@@ -13,14 +13,20 @@ SQLite, WAL mode, foreign keys on. Drizzle ORM defines the schema in
 - Every table carries `created_at` and `updated_at`.
 - Soft deletes via `status` (`active` / `closed` / `archived`) rather than row removal, so
   history and past valuations survive.
+- Enum columns carry a SQLite `CHECK` constraint as well as a TypeScript union. The
+  compiler does not supervise a restore, a migration or a manual fix; the database does.
+- Deleting a user cascades to their sessions, recovery codes and settings, but only
+  *nulls* the actor on their `audit_log` rows — an audit trail that disappears with its
+  subject is not an audit trail.
 
 ## Identity & access
 
 | Table | Purpose |
 | ----- | ------- |
-| `users` | email, argon2id `password_hash`, name, role (`admin`/`member`/`nominee`), status, `last_active_at`, encrypted TOTP secret, RSA public key, wrapped private key |
+| `users` | email (lowercased, unique), argon2id `password_hash`, name, role (`admin`/`member`/`nominee`), status (`active`/`suspended`), `last_active_at`, encrypted TOTP secret. The RSA keypair columns arrive with the vault in P4 |
 | `invites` | code hash, email, role, expiry, `consumed_by`. The only path to an account |
-| `refresh_tokens` | hashed token, family id, device label, expiry, revoked flag |
+| `refresh_tokens` | HMAC'd token, family id, device label, expiry, revoked flag, successor id. One row per issued token; rotation writes a new row and revokes the old |
+| `recovery_codes` | hashed single-use TOTP recovery codes, `used_at` |
 | `settings` | per-user KV: theme, lakh/crore display, privacy blur, partner-merge toggle |
 | `households` | id, name, created_by |
 | `household_members` | household, user, role (`owner`/`partner`/`member`), `share_mode` (`full`/`summary`/`none`), consent + accepted timestamps |

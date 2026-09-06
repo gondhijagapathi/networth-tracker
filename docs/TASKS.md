@@ -6,7 +6,7 @@ here says so and its tests pass.
 
 **Status key:** `[ ]` pending · `[~]` in progress · `[x]` done · `[!]` blocked
 
-Last updated: 2026-09-06 — P0 complete, 0 npm vulnerabilities
+Last updated: 2026-09-06 — P1 complete, 134 tests passing, 0 npm vulnerabilities
 
 ---
 
@@ -15,8 +15,8 @@ Last updated: 2026-09-06 — P0 complete, 0 npm vulnerabilities
 | Phase | Title | Status |
 | ----- | ----- | ------ |
 | P0 | Repo foundation & tooling | `[x]` done |
-| P1 | Authentication & users | `[~]` next |
-| P2 | Data model & asset CRUD | `[ ]` pending |
+| P1 | Authentication & users | `[x]` done |
+| P2 | Data model & asset CRUD | `[~]` next |
 | P3 | Dashboard & analytics | `[ ]` pending |
 | P4 | Zero-knowledge vault | `[ ]` pending |
 | P5 | Nominees, dead-man switch & claim kit | `[ ]` pending |
@@ -52,17 +52,33 @@ Last updated: 2026-09-06 — P0 complete, 0 npm vulnerabilities
 
 ## P1 — Authentication & users
 
-- [ ] `users`, `invites`, `refresh_tokens`, `settings` tables
-- [ ] Argon2id password hashing
-- [ ] Bootstrap admin from `BOOTSTRAP_INVITE_CODE` on first run
-- [ ] Invite-code registration (no open signup)
-- [ ] Login / logout, httpOnly cookies, rotating refresh tokens
-- [ ] CSRF double-submit token
-- [ ] Rate limiting + backoff on login and vault unlock
-- [ ] Optional TOTP 2FA (enrol, verify, recovery codes)
-- [ ] Admin user management (invite, suspend, revoke sessions)
-- [ ] Auth middleware + `requireRole` guard
-- [ ] Tests: full auth flow, expiry, rotation, replay rejection
+- [x] `users`, `invites`, `refresh_tokens`, `settings` tables (plus `recovery_codes`
+      and `audit_log`), with SQLite `CHECK` constraints on every enum column
+- [x] Migration runner applying committed SQL on boot, with `db:migrate` / `db:status`
+- [x] Argon2id password hashing (m=64MB, t=3, p=4) with a constant-time miss path
+- [x] Bootstrap admin from `BOOTSTRAP_INVITE_CODE` on first run
+- [x] Invite-code registration (no open signup); codes stored hashed, shown once
+- [x] Login / logout, httpOnly `SameSite=Strict` cookies, rotating refresh tokens
+- [x] Refresh-token families with replay detection (a replayed token revokes the family)
+- [x] CSRF double-submit token
+- [x] Rate limiting + exponential backoff on login (per email *and* per address) and
+      on invite redemption
+- [x] Optional TOTP 2FA (enrol, confirm, recovery codes); seed encrypted at rest
+- [x] Admin user management (invite, suspend, reactivate, change role, revoke sessions)
+      with guards against locking out the last admin
+- [x] Auth middleware + `requireRole` guard; role and status re-read per request so
+      suspension takes effect immediately
+- [x] Per-device session list and single-device revocation
+- [x] Tests: full auth flow, expiry, rotation, replay rejection, CSRF, backoff,
+      2FA, admin guards, and a schema/migration drift check
+
+Deferred to the phase that needs it:
+
+- Vault-unlock rate limiting moves to **P4**, where the unlock endpoint exists. The
+  limiter itself is built and covered by tests.
+- The blanket nominee read-only guard moves to **P2**, where the data routes it must
+  wrap are introduced. Mounting it in P1 would have been dead middleware that looked
+  like protection without providing any.
 
 ## P2 — Data model & asset CRUD
 

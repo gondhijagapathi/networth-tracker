@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { parseDuration } from './lib/time.js';
 
 /**
  * Environment configuration, validated once at boot.
@@ -18,6 +19,12 @@ const schema = z.object({
 
   JWT_ACCESS_SECRET: z.string().min(32, 'JWT_ACCESS_SECRET must be at least 32 characters'),
   JWT_REFRESH_SECRET: z.string().min(32, 'JWT_REFRESH_SECRET must be at least 32 characters'),
+  /**
+   * Encrypts server-readable secrets at rest — the TOTP seed today, provider credentials
+   * later. Separate from the JWT secrets so those can be rotated (invalidating sessions,
+   * which is recoverable) without destroying every enrolled second factor, which is not.
+   */
+  SECRET_ENCRYPTION_KEY: z.string().min(32, 'SECRET_ENCRYPTION_KEY must be at least 32 characters'),
   ACCESS_TOKEN_TTL: z.string().default('15m'),
   REFRESH_TOKEN_TTL: z.string().default('30d'),
   COOKIE_SECURE: z.coerce.boolean().default(false),
@@ -32,15 +39,76 @@ const schema = z.object({
   STOCK_PRICE_PROVIDER: z.enum(['manual', 'yahoo']).default('manual'),
 });
 
-export type Config = z.infer<typeof schema>;
+/** Values in `.env.example`. Running with any of these in production is a hard failure. */
+const PLACEHOLDER_MARKERS = ['replace-me', 'change-me'];
+
+export type Config = z.infer<typeof schema> & {
+  /** `ACCESS_TOKEN_TTL` parsed to seconds, so nothing downstream re-parses a string. */
+  accessTokenTtlSeconds: number;
+  refreshTokenTtlSeconds: number;
+};
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const parsed = schema.safeParse(env);
   if (!parsed.success) {
-    const issues = parsed.error.issues
-      .map((i) => `  - ${i.path.join('.')}: ${i.message}`)
-      .join('\n');
-    throw new Error(`Invalid environment configuration:\n${issues}\n\nSee .env.example.`);
+    throw configError(
+      parsed.error.issues.map((i) => `${i.path.join('.') || 'config'}: ${i.message}`),
+    );
   }
-  return parsed.data;
+
+  const value = parsed.data;
+  const problems: string[] = [];
+
+  // Reusing one secret for both tokens means a leaked access secret also mints refresh
+  // tokens — the short access lifetime would stop protecting anything.
+  if (value.JWT_ACCESS_SECRET === value.JWT_REFRESH_SECRET) {
+    problems.push('JWT_ACCESS_SECRET and JWT_REFRESH_SECRET must be different values');
+  }
+  if (value.SECRET_ENCRYPTION_KEY === value.JWT_ACCESS_SECRET) {
+    problems.push('SECRET_ENCRYPTION_KEY must differ from JWT_ACCESS_SECRET');
+  }
+
+  if (value.NODE_ENV === 'production') {
+    for (const [key, secret] of Object.entries({
+      JWT_ACCESS_SECRET: value.JWT_ACCESS_SECRET,
+      JWT_REFRESH_SECRET: value.JWT_REFRESH_SECRET,
+      SECRET_ENCRYPTION_KEY: value.SECRET_ENCRYPTION_KEY,
+      BOOTSTRAP_INVITE_CODE: value.BOOTSTRAP_INVITE_CODE ?? '',
+    })) {
+      if (PLACEHOLDER_MARKERS.some((marker) => secret.includes(marker))) {
+        problems.push(`${key} still holds its .env.example placeholder`);
+      }
+    }
+    if (!value.COOKIE_SECURE) {
+      problems.push('COOKIE_SECURE must be true in production — cookies carry the session');
+    }
+  }
+
+  let accessTokenTtlSeconds = 0;
+  let refreshTokenTtlSeconds = 0;
+  try {
+    accessTokenTtlSeconds = parseDuration(value.ACCESS_TOKEN_TTL);
+  } catch (error) {
+    problems.push(`ACCESS_TOKEN_TTL: ${(error as Error).message}`);
+  }
+  try {
+    refreshTokenTtlSeconds = parseDuration(value.REFRESH_TOKEN_TTL);
+  } catch (error) {
+    problems.push(`REFRESH_TOKEN_TTL: ${(error as Error).message}`);
+  }
+
+  if (accessTokenTtlSeconds > 0 && refreshTokenTtlSeconds > 0) {
+    if (accessTokenTtlSeconds >= refreshTokenTtlSeconds) {
+      problems.push('ACCESS_TOKEN_TTL must be shorter than REFRESH_TOKEN_TTL');
+    }
+  }
+
+  if (problems.length > 0) throw configError(problems);
+
+  return { ...value, accessTokenTtlSeconds, refreshTokenTtlSeconds };
+}
+
+function configError(problems: string[]): Error {
+  const list = problems.map((p) => `  - ${p}`).join('\n');
+  return new Error(`Invalid environment configuration:\n${list}\n\nSee .env.example.`);
 }
