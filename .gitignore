@@ -29,6 +29,8 @@ playwright-report/
 test-results/
 
 # Editors & OS
+.~lock.*#
+*.swp
 .vscode/*
 !.vscode/extensions.json
 .idea/
