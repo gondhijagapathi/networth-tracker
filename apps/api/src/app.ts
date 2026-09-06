@@ -6,8 +6,10 @@ import type { AppContext } from './context.js';
 import { csrfProtection } from './middleware/csrf.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
 import { adminRouter } from './routes/admin.js';
+import { assetsRouter } from './routes/assets.js';
 import { authRouter } from './routes/auth.js';
 import { healthRouter } from './routes/health.js';
+import { instrumentsRouter } from './routes/instruments.js';
 
 export function createApp(ctx: AppContext): Express {
   const { config } = ctx;
@@ -57,6 +59,8 @@ export function createApp(ctx: AppContext): Express {
   app.use('/api/health', healthRouter);
   app.use('/api/auth', authRouter(ctx));
   app.use('/api/admin', adminRouter(ctx));
+  app.use('/api/assets', assetsRouter(ctx));
+  app.use('/api/instruments', instrumentsRouter(ctx));
 
   app.use(notFoundHandler);
   app.use(errorHandler({ exposeStack: config.NODE_ENV === 'development' }));

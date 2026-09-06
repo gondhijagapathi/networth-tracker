@@ -32,7 +32,13 @@ export type AuditAction =
   | 'invite.rejected'
   | 'totp.enabled'
   | 'totp.disabled'
-  | 'totp.recovery_code_used';
+  | 'totp.recovery_code_used'
+  // Asset events are recorded where they cannot be reconstructed from the data itself: a
+  // created or archived asset leaves a row behind, a deleted transaction leaves nothing.
+  | 'asset.created'
+  | 'asset.archived'
+  | 'transaction.deleted'
+  | 'instrument.created';
 
 export interface AuditEntry {
   actorUserId?: string | null;

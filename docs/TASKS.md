@@ -6,7 +6,7 @@ here says so and its tests pass.
 
 **Status key:** `[ ]` pending · `[~]` in progress · `[x]` done · `[!]` blocked
 
-Last updated: 2026-09-06 — P1 complete, 134 tests passing, 0 npm vulnerabilities
+Last updated: 2026-09-06 — P2 complete, 212 tests passing, 0 npm vulnerabilities
 
 ---
 
@@ -16,8 +16,8 @@ Last updated: 2026-09-06 — P1 complete, 134 tests passing, 0 npm vulnerabiliti
 | ----- | ----- | ------ |
 | P0 | Repo foundation & tooling | `[x]` done |
 | P1 | Authentication & users | `[x]` done |
-| P2 | Data model & asset CRUD | `[~]` next |
-| P3 | Dashboard & analytics | `[ ]` pending |
+| P2 | Data model & asset CRUD | `[x]` done |
+| P3 | Dashboard & analytics | `[~]` next |
 | P4 | Zero-knowledge vault | `[ ]` pending |
 | P5 | Nominees, dead-man switch & claim kit | `[ ]` pending |
 | P6 | Household & partner merge | `[ ]` pending |
@@ -82,16 +82,39 @@ Deferred to the phase that needs it:
 
 ## P2 — Data model & asset CRUD
 
-- [ ] Drizzle schema for all identity, asset, liability and audit tables
-- [ ] Migration runner applied on boot; seed script for demo data
-- [ ] Scoped repository layer (owner + `access_grants`) used by every query
-- [ ] CRUD: bank accounts, deposits (FD/RD/PPF/SSY/NSC/KVP/MIS/SCSS)
-- [ ] CRUD: holdings + instruments (MF by AMFI code, equity by symbol)
-- [ ] CRUD: insurance policies, properties, retirement accounts
-- [ ] CRUD: precious metals, other assets, liabilities
-- [ ] `transactions` and append-only `valuations`
-- [ ] Zod schemas in `@networth/shared` shared by client and server
-- [ ] Tests: cross-user isolation returns 404 on every asset type
+- [x] Drizzle schema for all identity, asset, liability and audit tables —
+      `households`, `household_members`, `nominees`, `access_grants`, `assets` and its nine
+      detail tables, `instruments`, `instrument_prices`, `transactions`, `valuations`,
+      `documents`, with a SQLite `CHECK` on every enum column
+- [x] Migration runner applied on boot; `db:seed` fills an existing account with a
+      household's worth of demo assets, refusing to run twice or against production
+- [x] Scoped repository layer (owner + `access_grants`) used by every query; no route
+      handler writes its own owner filter
+- [x] CRUD: bank accounts, deposits (FD/RD/PPF/SSY/NSC/KVP/MIS/SCSS)
+- [x] CRUD: holdings + instruments (MF by AMFI code, equity by symbol), find-or-create so a
+      second household adding the same fund shares one NAV history
+- [x] CRUD: insurance policies, properties, retirement accounts
+- [x] CRUD: precious metals, other assets, liabilities
+- [x] `transactions` and append-only `valuations`; a same-day correction wins over what it
+      corrects, and nothing updates a valuation in place
+- [x] Zod schemas in `@networth/shared` shared by client and server, including the
+      account-number masking SECURITY-MODEL.md requires — enforced at the schema, so no
+      write path (routes, seed, future imports) can store a full number
+- [x] Units and per-unit prices as integers scaled by a million, so a four-decimal NAV
+      survives multiplication to the paise
+- [x] The nominee read-only guard, deferred from P1, now that there are data routes to wrap
+- [x] Tests: cross-user isolation returns 404 on every asset type, on every endpoint;
+      grants open reads and never writes; a summary grant stops short of detail; revoking or
+      expiring a grant closes access immediately
+
+Deliberately not in this phase:
+
+- **Transactions do not move a holding's units or average cost.** Recording an SIP writes a
+  cashflow; `holdings.units` stays whatever the owner set. Wiring the two together is the
+  cost-basis engine, and it belongs with XIRR in **P3** rather than as a side effect of a
+  CRUD endpoint.
+- **No asset UI.** P2 is the data model and the API; the asset list, detail pages and forms
+  are P3's work, alongside the dashboard they sit next to.
 
 ## P3 — Dashboard & analytics
 
