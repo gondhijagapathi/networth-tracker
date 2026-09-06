@@ -1,0 +1,145 @@
+@import 'tailwindcss';
+
+/*
+ * Design tokens.
+ *
+ * Defined once on :root as the light palette, then re-declared for dark. Nothing
+ * gets its only definition inside a media query, so a token always resolves.
+ * Dark is the default look; light is fully supported.
+ */
+@theme {
+  --font-sans:
+    'Inter var', 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Code', 'Roboto Mono', monospace;
+
+  /* Brand — deep indigo/violet, distinct from the green/red of gain and loss */
+  --color-brand-50: oklch(0.97 0.02 280);
+  --color-brand-100: oklch(0.93 0.05 280);
+  --color-brand-300: oklch(0.78 0.13 280);
+  --color-brand-400: oklch(0.7 0.17 280);
+  --color-brand-500: oklch(0.62 0.2 280);
+  --color-brand-600: oklch(0.54 0.2 280);
+  --color-brand-700: oklch(0.46 0.17 280);
+
+  /* Semantic — gain, loss, warning. Chosen for AA contrast on both grounds. */
+  --color-gain: oklch(0.72 0.16 155);
+  --color-loss: oklch(0.65 0.19 22);
+  --color-warn: oklch(0.78 0.15 75);
+}
+
+:root {
+  color-scheme: light;
+
+  --surface-base: oklch(0.98 0.004 265);
+  --surface-raised: oklch(1 0 0);
+  --surface-overlay: oklch(1 0 0);
+  --surface-sunken: oklch(0.95 0.006 265);
+
+  --border-subtle: oklch(0.9 0.006 265);
+  --border-strong: oklch(0.82 0.01 265);
+
+  --text-primary: oklch(0.22 0.015 265);
+  --text-secondary: oklch(0.48 0.012 265);
+  --text-muted: oklch(0.62 0.01 265);
+
+  --shadow-card: 0 1px 2px oklch(0.2 0.02 265 / 0.06), 0 4px 16px oklch(0.2 0.02 265 / 0.06);
+}
+
+:root[data-theme='dark'],
+:root:not([data-theme='light']) {
+  color-scheme: dark;
+
+  --surface-base: oklch(0.17 0.012 265);
+  --surface-raised: oklch(0.21 0.014 265);
+  --surface-overlay: oklch(0.25 0.016 265);
+  --surface-sunken: oklch(0.14 0.012 265);
+
+  --border-subtle: oklch(0.29 0.014 265);
+  --border-strong: oklch(0.38 0.018 265);
+
+  --text-primary: oklch(0.96 0.004 265);
+  --text-secondary: oklch(0.74 0.012 265);
+  --text-muted: oklch(0.58 0.012 265);
+
+  --shadow-card: 0 1px 2px oklch(0 0 0 / 0.3), 0 8px 24px oklch(0 0 0 / 0.24);
+}
+
+/* An explicit light choice must beat the dark default above. */
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --surface-base: oklch(0.98 0.004 265);
+  --surface-raised: oklch(1 0 0);
+  --surface-overlay: oklch(1 0 0);
+  --surface-sunken: oklch(0.95 0.006 265);
+
+  --border-subtle: oklch(0.9 0.006 265);
+  --border-strong: oklch(0.82 0.01 265);
+
+  --text-primary: oklch(0.22 0.015 265);
+  --text-secondary: oklch(0.48 0.012 265);
+  --text-muted: oklch(0.62 0.01 265);
+
+  --shadow-card: 0 1px 2px oklch(0.2 0.02 265 / 0.06), 0 4px 16px oklch(0.2 0.02 265 / 0.06);
+}
+
+@layer base {
+  * {
+    border-color: var(--border-subtle);
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--surface-base);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    /* Respect the notch on phones — this app is used one-handed. */
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  /* Amounts must align in columns. Non-negotiable for a money app. */
+  .tabular,
+  table td,
+  table th {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum';
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-brand-400);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer components {
+  .surface-card {
+    background-color: var(--surface-raised);
+    border: 1px solid var(--border-subtle);
+    border-radius: 1rem;
+    box-shadow: var(--shadow-card);
+  }
+
+  /*
+   * Privacy blur — one tap hides every amount on screen, for checking your net
+   * worth on a phone in public. Values stay in the DOM; only the pixels are hidden.
+   */
+  .privacy-on .sensitive {
+    filter: blur(7px);
+    user-select: none;
+    pointer-events: none;
+  }
+}

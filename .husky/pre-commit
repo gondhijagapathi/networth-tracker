@@ -1,0 +1,31 @@
+npx lint-staged
+
+# Safety net: never let secrets or the database into git history.
+# The .gitignore already covers these — this catches a forced add.
+staged=$(git diff --cached --name-only --diff-filter=ACM)
+offenders=$(printf '%s\n' "$staged" \
+  | grep -E '(^|/)\.env($|\.)|\.(db|sqlite|sqlite3)$|^data/' \
+  | grep -v -E '(^|/)\.env\.example$' || true)
+
+if [ -n "$offenders" ]; then
+  echo "✖ Refusing to commit — these files must never enter git history:"
+  echo "$offenders" | sed 's/^/    /'
+  echo "  Remove them with: git restore --staged <file>"
+  exit 1
+fi
+
+# Catch obvious credential material pasted into source.
+# .env.example is excluded — it exists to hold placeholder values.
+scan=$(printf '%s\n' "$staged" | grep -v -E '(^|/)\.env\.example$' || true)
+
+if [ -n "$scan" ]; then
+  leaks=$(git diff --cached -U0 -- $scan 2>/dev/null \
+    | grep -E '^\+' \
+    | grep -iE '(BEGIN [A-Z ]*PRIVATE KEY|AKIA[0-9A-Z]{16}|(JWT_(ACCESS|REFRESH)_SECRET|PASSWORD|API_KEY)[[:space:]]*=[[:space:]]*["'"'"']?[A-Za-z0-9+/=_-]{16,})' || true)
+  if [ -n "$leaks" ]; then
+    echo "✖ Possible secret in staged changes:"
+    echo "$leaks" | sed 's/^/    /'
+    echo "  If this is a false positive, commit with --no-verify and say why in the message."
+    exit 1
+  fi
+fi
