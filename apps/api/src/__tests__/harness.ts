@@ -14,7 +14,13 @@
 import type { Express } from 'express';
 import type Database from 'better-sqlite3';
 import supertest from 'supertest';
-import type { CreateInviteBody, PublicUser, Role } from '@networth/shared';
+import {
+  ASSET_TYPES,
+  type AssetType,
+  type CreateInviteBody,
+  type PublicUser,
+  type Role,
+} from '@networth/shared';
 import { createApp } from '../app.js';
 import { loadConfig, type Config } from '../config.js';
 import { createContext, type AppContext } from '../context.js';
@@ -241,4 +247,147 @@ export async function registerMember(
   }
   client.user = response.body.user as PublicUser;
   return client;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Asset fixtures                                                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * A valid create body for each asset type.
+ *
+ * Kept here rather than in one test file because "does this work for *every* asset type" is
+ * the question P2's isolation tests exist to answer, and later phases — the dashboard, the
+ * claim kit, backup and restore — need the same nine bodies to answer their own version of
+ * it. The values are realistic on purpose: an FD at 7.1%, an SGB in grams, a khata number
+ * on a plot of land.
+ */
+export function sampleAssetBody(
+  type: AssetType,
+  options: { instrumentId?: string } = {},
+): Record<string, unknown> {
+  const base = { name: `Test ${type}`, institution: 'Test Institution', valuePaise: 10_000_00 };
+
+  switch (type) {
+    case 'bank_account':
+      return {
+        ...base,
+        type,
+        detail: {
+          accountNumber: '50100123456789',
+          ifsc: 'HDFC0001234',
+          branch: 'Indiranagar',
+          accountType: 'savings',
+        },
+      };
+    case 'deposit':
+      return {
+        ...base,
+        type,
+        detail: {
+          kind: 'fd',
+          principalPaise: 5_00_000_00,
+          rateBps: 710,
+          compounding: 'quarterly',
+          startedOn: '2025-04-01',
+          maturesOn: '2030-04-01',
+        },
+      };
+    case 'holding':
+      return {
+        ...base,
+        type,
+        detail: {
+          instrumentId: options.instrumentId ?? '',
+          units: 1_234_567_000,
+          avgCostMicro: 98_500_000,
+          folioNumber: '12345678/90',
+        },
+      };
+    case 'insurance_policy':
+      return {
+        ...base,
+        type,
+        detail: {
+          policyNumber: '123456789',
+          insurer: 'LIC',
+          kind: 'term',
+          sumAssuredPaise: 1_00_00_000_00,
+          premiumPaise: 24_000_00,
+          premiumFrequency: 'yearly',
+        },
+      };
+    case 'property':
+      return {
+        ...base,
+        type,
+        detail: {
+          kind: 'land',
+          surveyNumber: '112/2B',
+          khataNumber: 'K-4471',
+          subRegistrarOffice: 'Kolar',
+          areaMicro: 1_200_000_000,
+          areaUnit: 'sqft',
+        },
+      };
+    case 'retirement_account':
+      return {
+        ...base,
+        type,
+        detail: {
+          kind: 'epf',
+          uan: '100123456789',
+          employeeBalancePaise: 8_50_000_00,
+          employerBalancePaise: 6_20_000_00,
+        },
+      };
+    case 'precious_metal':
+      return {
+        ...base,
+        type,
+        detail: { form: 'sgb', metal: 'gold', weightMilligrams: 40_000, purity: '999' },
+      };
+    case 'other_asset':
+      return {
+        ...base,
+        type,
+        detail: { kind: 'crypto', symbol: 'BTC', quantityMicro: 50_000, wallet: 'cold storage' },
+      };
+    case 'liability':
+      return {
+        ...base,
+        type,
+        detail: {
+          kind: 'home',
+          lender: 'HDFC',
+          principalPaise: 50_00_000_00,
+          outstandingPaise: 32_00_000_00,
+          rateBps: 865,
+          emiPaise: 45_000_00,
+          tenureMonths: 240,
+        },
+      };
+  }
+}
+
+/** Create one asset of each type and return them by type. Needs an instrument for holdings. */
+export async function createEveryAssetType(
+  client: TestClient,
+): Promise<Record<AssetType, { id: string }>> {
+  const instrument = await client.post('/api/instruments', {
+    kind: 'mf',
+    name: 'Test Flexi Cap Fund',
+    amfiSchemeCode: '120503',
+  });
+  const instrumentId = instrument.body.instrument.id as string;
+
+  const created = {} as Record<AssetType, { id: string }>;
+  for (const type of ASSET_TYPES) {
+    const response = await client.post('/api/assets', sampleAssetBody(type, { instrumentId }));
+    if (response.status !== 201) {
+      throw new Error(`Creating ${type} failed: ${response.status} ${response.text}`);
+    }
+    created[type] = { id: response.body.asset.id as string };
+  }
+  return created;
 }

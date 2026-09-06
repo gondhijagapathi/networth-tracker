@@ -10,11 +10,12 @@
  * runtime "no such column" in whichever feature happened to touch it first.
  */
 
+import { readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import Database from 'better-sqlite3';
 import { getTableConfig } from 'drizzle-orm/sqlite-core';
 import * as schema from '../schema.js';
-import { appliedMigrations, runMigrations } from '../migrate.js';
+import { MIGRATIONS_DIR, appliedMigrations, runMigrations } from '../migrate.js';
 
 interface ColumnInfo {
   name: string;
@@ -38,7 +39,14 @@ const tables = Object.values(schema).filter(
 describe('migrations', () => {
   it('apply cleanly to an empty database', () => {
     const sqlite = migratedDatabase();
-    expect(appliedMigrations(sqlite).map((m) => m.name)).toEqual(['0000_auth.sql']);
+    // Read from the directory rather than a hard-coded list: the assertion that matters is
+    // "every committed migration ran", and that should not need editing each phase.
+    const committed = readdirSync(MIGRATIONS_DIR)
+      .filter((file) => file.endsWith('.sql'))
+      .sort();
+
+    expect(committed.length).toBeGreaterThan(0);
+    expect(appliedMigrations(sqlite).map((m) => m.name)).toEqual(committed);
     sqlite.close();
   });
 

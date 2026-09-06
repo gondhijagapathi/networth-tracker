@@ -11,6 +11,7 @@
     "db:generate": "npx --yes drizzle-kit@0.31.10 generate",
     "db:migrate": "tsx --env-file-if-exists=../../.env src/db/cli.ts migrate",
     "db:status": "tsx --env-file-if-exists=../../.env src/db/cli.ts status",
+    "db:seed": "tsx --env-file-if-exists=../../.env src/db/seed.ts",
     "clean": "rm -rf dist *.tsbuildinfo"
   },
   "dependencies": {

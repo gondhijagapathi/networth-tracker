@@ -66,7 +66,10 @@ openssl rand -base64 48   # SECRET_ENCRYPTION_KEY
 npm run dev
 ```
 
-The API creates and migrates `data/networth.db` on first boot. `SECRET_ENCRYPTION_KEY`
+The API creates and migrates `data/networth.db` on first boot. To fill an account with a
+household's worth of demo assets — deposits, a fund holding with two years of SIPs, a plot
+of land, EPF, gold bonds and a home loan — register first, then run
+`npm run db:seed -- --email you@example.com`. `SECRET_ENCRYPTION_KEY`
 encrypts server-readable secrets at rest (today, TOTP seeds) — **back it up with the
 database**, because rotating it makes every enrolled second factor unreadable.
 
@@ -103,6 +106,16 @@ All routes are under `/api`. Sessions are cookie-based; mutating requests must e
 | `GET`/`PATCH` | `/admin/users[/:id]` | List accounts; suspend, reactivate, change role |
 | `POST` | `/admin/users/:id/revoke-sessions` | Sign a user out everywhere |
 | `GET`/`POST`/`DELETE` | `/admin/invites[/:id]` | Issue, list and withdraw invites |
+| `GET`/`POST` | `/assets` | List (filter, search, sort, paginate) and create assets |
+| `GET` | `/assets/counts` | Counts by type and status, for the list's filter chips |
+| `GET`/`PATCH`/`DELETE` | `/assets/:id` | Read, update and archive one asset |
+| `GET`/`POST` | `/assets/:id/valuations` | Valuation history; append a new valuation |
+| `GET`/`POST` | `/assets/:id/transactions` | Transaction history; record a movement |
+| `PATCH`/`DELETE` | `/assets/:id/transactions/:txId` | Correct or remove a transaction |
+| `GET`/`POST` | `/instruments[/:id]` | Search the scheme/share catalogue; find or create |
+
+Every asset route is scoped: a caller outside an asset's scope is told it does not exist.
+Grants are read-only, so a shared asset is refused for writes in the same terms.
 
 ## Backup and restore
 

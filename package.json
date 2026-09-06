@@ -25,6 +25,7 @@
     "format:check": "prettier --check .",
     "db:generate": "npm run db:generate -w @networth/api",
     "db:migrate": "npm run db:migrate -w @networth/api",
+    "db:seed": "npm run db:seed -w @networth/api --",
     "backup": "npm run backup -w @networth/api",
     "prepare": "husky"
   },
