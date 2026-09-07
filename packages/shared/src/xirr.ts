@@ -63,6 +63,11 @@ export function xirr(flows: readonly CashFlow[], guess = 0.1): number | null {
   const sorted = [...flows].sort((a, b) => a.date.localeCompare(b.date));
   const base = sorted[0]!.date;
 
+  // Everything on one date — bought and valued the same morning. Any rate satisfies
+  // NPV = 0 over a zero-length window, so none of them is the answer, and returning the
+  // initial guess would dress that up as a result.
+  if (sorted.every((flow) => flow.date.slice(0, 10) === base.slice(0, 10))) return null;
+
   // Newton–Raphson first: fast when it works.
   let rate = guess;
   for (let i = 0; i < MAX_ITERATIONS; i += 1) {

@@ -6,7 +6,7 @@ here says so and its tests pass.
 
 **Status key:** `[ ]` pending · `[~]` in progress · `[x]` done · `[!]` blocked
 
-Last updated: 2026-09-06 — P2 complete, 212 tests passing, 0 npm vulnerabilities
+Last updated: 2026-09-07 — P3 complete, 287 tests passing, 0 npm vulnerabilities
 
 ---
 
@@ -17,8 +17,8 @@ Last updated: 2026-09-06 — P2 complete, 212 tests passing, 0 npm vulnerabiliti
 | P0 | Repo foundation & tooling | `[x]` done |
 | P1 | Authentication & users | `[x]` done |
 | P2 | Data model & asset CRUD | `[x]` done |
-| P3 | Dashboard & analytics | `[~]` next |
-| P4 | Zero-knowledge vault | `[ ]` pending |
+| P3 | Dashboard & analytics | `[x]` done |
+| P4 | Zero-knowledge vault | `[~]` next |
 | P5 | Nominees, dead-man switch & claim kit | `[ ]` pending |
 | P6 | Household & partner merge | `[ ]` pending |
 | P7 | Price providers | `[ ]` pending |
@@ -118,13 +118,38 @@ Deliberately not in this phase:
 
 ## P3 — Dashboard & analytics
 
-- [ ] Net worth over time (from `valuations`)
-- [ ] Allocation by class / institution / liquidity
-- [ ] XIRR (Newton–Raphson) and CAGR per asset, class, portfolio
-- [ ] Deposit accrual engine (FD/RD/PPF/SSY compounding)
-- [ ] Asset list with filter, sort, search
-- [ ] Asset detail pages per type
-- [ ] Concentration and emergency-fund indicators
+- [x] Net worth over time (from `valuations`), recomputed per sample date rather than
+      replayed, so a deposit curves upward from a single opening entry
+- [x] Allocation by class / institution / liquidity — and by type; every dimension
+      available in one round trip
+- [x] XIRR (Newton–Raphson) and CAGR per asset, class, portfolio
+- [x] Deposit accrual engine (FD/RD/PPF/SSY compounding), anchored on a reconciled
+      valuation where the owner has recorded one
+- [x] Asset list with filter, sort, search — state in the URL, so a filtered list is a link
+- [x] Asset detail pages per type
+- [x] Concentration and emergency-fund indicators, plus value sitting in unnominated assets
+
+Worth stating about the returns figures:
+
+- **CAGR is reported only where it is true.** It describes one sum in and one value out, so
+  an asset with instalments gets XIRR and no CAGR, and the class and portfolio rollups —
+  many assets, many purchase dates — carry XIRR alone. Averaging members' CAGRs would
+  produce a number that looks like a return and is not one.
+- **Returns are gross; net worth is not.** Performance runs full cashflows against the full
+  value, because pairing an ownership-adjusted value with unadjusted transactions yields a
+  rate that is simply wrong. The `ownership_percent` split belongs on net worth, where it
+  is applied.
+- **Liabilities are left out of returns entirely.** A home loan's XIRR is its interest rate:
+  a true number, and a confusing one on a page headed "how are my investments doing".
+
+Deliberately not in this phase:
+
+- **The cost-basis engine still does not move a holding's units or average cost.** P2
+  deferred it here on the grounds that it belonged with XIRR; in the event, XIRR is
+  computed from the recorded cashflows directly and needs no running average to do it.
+  Rewriting `holdings.units` from transaction history is a data-migration question rather
+  than an analytics one, and it is better answered next to the CAS import in the backlog
+  that would produce the volume of transactions to justify it.
 
 ## P4 — Zero-knowledge vault
 

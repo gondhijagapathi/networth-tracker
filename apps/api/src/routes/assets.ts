@@ -21,6 +21,7 @@ import { requireAuth, requireAuthContext } from '../middleware/auth.js';
 import { denyNomineeWrites } from '../middleware/readonly.js';
 import { assetTypeCounts } from '../repos/asset.repo.js';
 import { resolveScope } from '../repos/scope.js';
+import { assetPerformance } from '../services/analytics.service.js';
 import {
   addTransaction,
   archiveAsset,
@@ -76,6 +77,15 @@ export function assetsRouter(ctx: AppContext): Router {
   router.delete('/:id', (req, res) => {
     const scope = resolveScope(ctx, requireAuthContext(req));
     res.json({ asset: archiveAsset(ctx, scope, pathParam(req, 'id'), clientIp(req)) });
+  });
+
+  /**
+   * How this one asset has done: invested, current value, XIRR and — where the shape of
+   * the cashflows allows one — CAGR.
+   */
+  router.get('/:id/performance', (req, res) => {
+    const scope = resolveScope(ctx, requireAuthContext(req));
+    res.json({ performance: assetPerformance(ctx, scope, pathParam(req, 'id')) });
   });
 
   /* ---------------------------------------------------------------------- */
