@@ -6,6 +6,7 @@ import type { AppContext } from './context.js';
 import { csrfProtection } from './middleware/csrf.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
 import { adminRouter } from './routes/admin.js';
+import { analyticsRouter } from './routes/analytics.js';
 import { assetsRouter } from './routes/assets.js';
 import { authRouter } from './routes/auth.js';
 import { healthRouter } from './routes/health.js';
@@ -60,6 +61,7 @@ export function createApp(ctx: AppContext): Express {
   app.use('/api/auth', authRouter(ctx));
   app.use('/api/admin', adminRouter(ctx));
   app.use('/api/assets', assetsRouter(ctx));
+  app.use('/api/analytics', analyticsRouter(ctx));
   app.use('/api/instruments', instrumentsRouter(ctx));
 
   app.use(notFoundHandler);
