@@ -9,7 +9,11 @@ describe('uuidv7', () => {
   });
 
   it('encodes the generation time in the leading 48 bits', () => {
-    const now = Date.UTC(2026, 8, 6, 12, 0, 0);
+    // Read from the clock rather than pinned to a fixed date. The generator never goes
+    // backwards, so a timestamp already behind one this module has issued is clamped
+    // forward — and a hardcoded date becomes a test that passes until the day the wall
+    // clock overtakes it.
+    const now = Date.now() + 1_000;
     const id = uuidv7(now);
     expect(uuidv7Timestamp(id)).toBe(now);
   });
