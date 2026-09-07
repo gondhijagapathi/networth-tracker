@@ -7,3 +7,5 @@ export * from './auth.js';
 export * from './assets.js';
 export * from './accrual.js';
 export * from './analytics.js';
+export * from './vault.js';
+export * from './estate.js';
