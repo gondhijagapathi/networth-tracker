@@ -52,7 +52,7 @@ export const users = sqliteTable(
     totpSecretEncrypted: text('totp_secret_encrypted'),
     /** Set only once enrolment has been confirmed with a live code. */
     totpEnabled: integer('totp_enabled', { mode: 'boolean' }).notNull().default(false),
-    /** Drives the dead-man switch in P5; written on every successful authentication. */
+    /** Drives the dead-man switch; written on every successful authentication. */
     lastActiveAt: text('last_active_at'),
     createdAt: text('created_at').notNull().default(nowUtc),
     updatedAt: text('updated_at').notNull().default(nowUtc),
@@ -844,8 +844,16 @@ export const valuations = sqliteTable(
 );
 
 /**
- * Uploaded files. The table lands with the schema in P2; encrypted upload and download
- * arrive with the vault in P4, which is why `encrypted` exists but nothing sets it yet.
+ * Uploaded files, always encrypted.
+ *
+ * P2 declared this table with plaintext `filename` and `mime` columns and an `encrypted`
+ * flag, on the assumption that some documents would not need the vault. P4 removes the
+ * choice: every file this app stores is a financial document, so the filename and the type
+ * are encrypted along with the bytes and there is no flag to get wrong. Nothing had ever
+ * written a row, so the migration rebuilds the table rather than carrying dead columns.
+ *
+ * The ciphertext on disk carries its own twelve-byte IV as a prefix, which means a restored
+ * backup needs nothing from this database to be decryptable except the owner's vault key.
  */
 export const documents = sqliteTable(
   'documents',
@@ -854,19 +862,214 @@ export const documents = sqliteTable(
     ownerUserId: text('owner_user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
-    assetId: text('asset_id').references(() => assets.id, { onDelete: 'cascade' }),
-    filename: text('filename').notNull(),
-    mime: text('mime').notNull(),
+    assetId: text('asset_id').references(() => assets.id, { onDelete: 'set null' }),
+    /** JSON `{v, iv, ct}` over `{filename, mime}`. Even the name of the file is private. */
+    meta: text('meta').notNull(),
+    /** Length of the stored ciphertext, IV and GCM tag included. */
     sizeBytes: integer('size_bytes').notNull(),
     /** Path relative to `UPLOAD_DIR`; the file itself never lives in the database. */
     storagePath: text('storage_path').notNull(),
+    /** Of the ciphertext as written, so a corrupted blob is detected before it is decrypted. */
     sha256: text('sha256').notNull(),
-    encrypted: integer('encrypted', { mode: 'boolean' }).notNull().default(false),
     createdAt: text('created_at').notNull().default(nowUtc),
   },
   (table) => [
     index('documents_owner_idx').on(table.ownerUserId),
     index('documents_asset_idx').on(table.assetId),
+    check('documents_meta_check', sql`json_extract(${table.meta}, '$.ct') is not null`),
+    check('documents_size_check', sql`${table.sizeBytes} > 0`),
+  ],
+);
+
+/* -------------------------------------------------------------------------- */
+/* vault                                                                      */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The key material one user's vault is opened with.
+ *
+ * Every column here is either public by design or useless without a passphrase this server
+ * never sees. There is deliberately no verifier column: checking a passphrase happens when
+ * the AES-GCM tag on `wrapped_dek` authenticates, in the browser. A server-side verifier
+ * would hand anyone who copied this file a free oracle to grind against.
+ *
+ * Encrypted values are stored as the JSON envelope `{v, iv, ct}` rather than split across
+ * columns, so the format version travels with the ciphertext into a backup and out again.
+ */
+export const vaultKeys = sqliteTable(
+  'vault_keys',
+  {
+    userId: text('user_id')
+      .primaryKey()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    /** Per-user Argon2id salt, base64url. Public; its job is to defeat shared rainbow tables. */
+    kdfSalt: text('kdf_salt').notNull(),
+    /** JSON `{algorithm, memoryKib, iterations, parallelism}` — the client's choice, stored verbatim. */
+    kdfParams: text('kdf_params').notNull(),
+    /** The AES-256 data key, wrapped under the key derived from the vault passphrase. */
+    wrappedDek: text('wrapped_dek').notNull(),
+    /** RSA-OAEP public JWK. Plaintext, so an owner can wrap a key to a nominee who is offline. */
+    publicKeyJwk: text('public_key_jwk').notNull(),
+    /** PKCS#8 private key, wrapped under the same derived key. */
+    wrappedPrivateKey: text('wrapped_private_key').notNull(),
+    createdAt: text('created_at').notNull().default(nowUtc),
+    updatedAt: text('updated_at').notNull().default(nowUtc),
+  },
+  (table) => [
+    // A row that is not a well-formed envelope could only come from something other than
+    // this application writing the file, and it would fail at unwrap time with no
+    // explanation. Fail at the insert instead.
+    check('vault_keys_dek_check', sql`json_extract(${table.wrappedDek}, '$.ct') is not null`),
+    check(
+      'vault_keys_private_check',
+      sql`json_extract(${table.wrappedPrivateKey}, '$.ct') is not null`,
+    ),
+  ],
+);
+
+const VAULT_ITEM_KIND_LIST = sql`('bank_login', 'card', 'demat', 'policy', 'locker', 'credential', 'document_location', 'instruction', 'note')`;
+
+/**
+ * One encrypted secret.
+ *
+ * `kind` and `asset_id` are in the clear and everything else is not — a documented leak
+ * (docs/SECURITY-MODEL.md) that buys the ability to say "this deposit has two vault items"
+ * on a locked screen. The label, the username and the secret are all inside `payload`.
+ */
+export const vaultItems = sqliteTable(
+  'vault_items',
+  {
+    id: text('id').primaryKey(),
+    ownerUserId: text('owner_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    assetId: text('asset_id').references(() => assets.id, { onDelete: 'set null' }),
+    kind: text('kind', {
+      enum: [
+        'bank_login',
+        'card',
+        'demat',
+        'policy',
+        'locker',
+        'credential',
+        'document_location',
+        'instruction',
+        'note',
+      ],
+    }).notNull(),
+    /** JSON `{v, iv, ct}`. The server has no key that opens it and no code path that tries. */
+    payload: text('payload').notNull(),
+    createdAt: text('created_at').notNull().default(nowUtc),
+    updatedAt: text('updated_at').notNull().default(nowUtc),
+  },
+  (table) => [
+    index('vault_items_owner_idx').on(table.ownerUserId, table.kind),
+    index('vault_items_asset_idx').on(table.assetId),
+    check('vault_items_kind_check', sql`${table.kind} in ${VAULT_ITEM_KIND_LIST}`),
+    check('vault_items_payload_check', sql`json_extract(${table.payload}, '$.ct') is not null`),
+  ],
+);
+
+/* -------------------------------------------------------------------------- */
+/* vault escrow                                                               */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * An owner's data key, wrapped to a nominee's public key and held sealed.
+ *
+ * The server cannot open this and cannot create it — the wrapping happens in the owner's
+ * browser while their vault is unlocked. What the server owns is the *release decision*,
+ * and that is the reason this is a state machine with an audit trail rather than a column
+ * on `nominees`: "when did this open, and what opened it" is the question that matters
+ * after somebody has died.
+ */
+export const vaultEscrow = sqliteTable(
+  'vault_escrow',
+  {
+    id: text('id').primaryKey(),
+    ownerUserId: text('owner_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    nomineeId: text('nominee_id')
+      .notNull()
+      .references(() => nominees.id, { onDelete: 'cascade' }),
+    /** Denormalised from `nominees` so a released escrow can be found by the heir directly. */
+    granteeUserId: text('grantee_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    /** The DEK under RSA-OAEP, base64url. Opaque bytes as far as this process is concerned. */
+    wrappedDek: text('wrapped_dek').notNull(),
+    /** Of the public key it was wrapped to, so a rotated key shows up as a stale escrow. */
+    publicKeyFingerprint: text('public_key_fingerprint').notNull(),
+    state: text('state', { enum: ['sealed', 'released', 'revoked'] })
+      .notNull()
+      .default('sealed'),
+    releaseReason: text('release_reason', { enum: ['owner', 'deadman'] }),
+    releasedAt: text('released_at'),
+    revokedAt: text('revoked_at'),
+    createdAt: text('created_at').notNull().default(nowUtc),
+    updatedAt: text('updated_at').notNull().default(nowUtc),
+  },
+  (table) => [
+    uniqueIndex('vault_escrow_nominee_unique').on(table.nomineeId),
+    index('vault_escrow_owner_idx').on(table.ownerUserId, table.state),
+    index('vault_escrow_grantee_idx').on(table.granteeUserId, table.state),
+    check('vault_escrow_state_check', sql`${table.state} in ('sealed', 'released', 'revoked')`),
+    check(
+      'vault_escrow_reason_check',
+      sql`${table.releaseReason} is null or ${table.releaseReason} in ('owner', 'deadman')`,
+    ),
+    // A released escrow without a reason or a timestamp is a row nobody could account for
+    // later, which defeats the point of keeping the history at all.
+    check(
+      'vault_escrow_released_check',
+      sql`(${table.state} <> 'released') or (${table.releasedAt} is not null and ${table.releaseReason} is not null)`,
+    ),
+  ],
+);
+
+/* -------------------------------------------------------------------------- */
+/* dead-man switch                                                            */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Silence, measured.
+ *
+ * One row per user, created when they first configure it. `last_checkin_at` is bumped by
+ * an explicit check-in *and* by ordinary authentication, because the honest signal is "this
+ * person is still using their account", not "this person clicked the button".
+ */
+export const deadManSwitch = sqliteTable(
+  'dead_man_switch',
+  {
+    userId: text('user_id')
+      .primaryKey()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    enabled: integer('enabled', { mode: 'boolean' }).notNull().default(false),
+    /** Days of silence before the grace period opens. Floor of 30 enforced by the schema. */
+    inactivityDays: integer('inactivity_days').notNull().default(90),
+    graceDays: integer('grace_days').notNull().default(7),
+    lastCheckinAt: text('last_checkin_at').notNull().default(nowUtc),
+    stage: text('stage', {
+      enum: ['idle', 'warned_50', 'warned_75', 'warned_90', 'grace', 'fired'],
+    })
+      .notNull()
+      .default('idle'),
+    graceStartedAt: text('grace_started_at'),
+    firedAt: text('fired_at'),
+    updatedAt: text('updated_at').notNull().default(nowUtc),
+  },
+  (table) => [
+    index('dead_man_switch_enabled_idx').on(table.enabled, table.stage),
+    check(
+      'dead_man_switch_stage_check',
+      sql`${table.stage} in ('idle', 'warned_50', 'warned_75', 'warned_90', 'grace', 'fired')`,
+    ),
+    check('dead_man_switch_inactivity_check', sql`${table.inactivityDays} between 30 and 730`),
+    check(
+      'dead_man_switch_grace_check',
+      sql`${table.graceDays} between 1 and 90 and ${table.graceDays} < ${table.inactivityDays}`,
+    ),
   ],
 );
 
@@ -882,3 +1085,9 @@ export type AccessGrantRow = typeof accessGrants.$inferSelect;
 export type InstrumentRow = typeof instruments.$inferSelect;
 export type TransactionRow = typeof transactions.$inferSelect;
 export type ValuationRow = typeof valuations.$inferSelect;
+export type VaultKeyRow = typeof vaultKeys.$inferSelect;
+export type VaultItemRow = typeof vaultItems.$inferSelect;
+export type VaultEscrowRow = typeof vaultEscrow.$inferSelect;
+export type DeadManSwitchRow = typeof deadManSwitch.$inferSelect;
+export type NomineeRow = typeof nominees.$inferSelect;
+export type DocumentRow = typeof documents.$inferSelect;

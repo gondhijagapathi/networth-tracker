@@ -9,7 +9,7 @@
 import type Database from 'better-sqlite3';
 import type { Config } from './config.js';
 import type { Db } from './db/client.js';
-import { INVITE_POLICY, LOGIN_POLICY, RateLimiter } from './lib/rateLimit.js';
+import { INVITE_POLICY, LOGIN_POLICY, RateLimiter, VAULT_POLICY } from './lib/rateLimit.js';
 
 export interface AppContext {
   config: Config;
@@ -19,6 +19,8 @@ export interface AppContext {
   loginLimiter: RateLimiter;
   /** Backoff on invalid invite codes, keyed by client address. */
   inviteLimiter: RateLimiter;
+  /** Backoff on repeated retrieval of vault key material, keyed by user. */
+  vaultLimiter: RateLimiter;
   /** Injectable clock. Tests advance it; production reads the wall clock. */
   now: () => Date;
 }
@@ -38,6 +40,7 @@ export function createContext(
     sqlite,
     loginLimiter: new RateLimiter(LOGIN_POLICY, clockMs),
     inviteLimiter: new RateLimiter(INVITE_POLICY, clockMs),
+    vaultLimiter: new RateLimiter(VAULT_POLICY, clockMs),
     now,
   };
 }

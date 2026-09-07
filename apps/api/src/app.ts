@@ -9,8 +9,11 @@ import { adminRouter } from './routes/admin.js';
 import { analyticsRouter } from './routes/analytics.js';
 import { assetsRouter } from './routes/assets.js';
 import { authRouter } from './routes/auth.js';
+import { estateRouter } from './routes/estate.js';
 import { healthRouter } from './routes/health.js';
 import { instrumentsRouter } from './routes/instruments.js';
+import { nomineesRouter } from './routes/nominees.js';
+import { vaultRouter } from './routes/vault.js';
 
 export function createApp(ctx: AppContext): Express {
   const { config } = ctx;
@@ -39,8 +42,11 @@ export function createApp(ctx: AppContext): Express {
           formAction: ["'self'"],
         },
       },
-      // The vault does key derivation in a WASM worker in P4, which needs cross-origin
-      // isolation to use SharedArrayBuffer.
+      // Off, and it stays off. The plan assumed the vault's Argon2id would need
+      // SharedArrayBuffer and therefore cross-origin isolation; `hash-wasm` computes its
+      // lanes without one, so requiring COEP would buy nothing and would break any future
+      // embed for no reason. This matches helmet's own default and is written down so the
+      // next person does not have to re-derive it.
       crossOriginEmbedderPolicy: false,
       referrerPolicy: { policy: 'same-origin' },
     }),
@@ -63,6 +69,9 @@ export function createApp(ctx: AppContext): Express {
   app.use('/api/assets', assetsRouter(ctx));
   app.use('/api/analytics', analyticsRouter(ctx));
   app.use('/api/instruments', instrumentsRouter(ctx));
+  app.use('/api/vault', vaultRouter(ctx));
+  app.use('/api/nominees', nomineesRouter(ctx));
+  app.use('/api/estate', estateRouter(ctx));
 
   app.use(notFoundHandler);
   app.use(errorHandler({ exposeStack: config.NODE_ENV === 'development' }));

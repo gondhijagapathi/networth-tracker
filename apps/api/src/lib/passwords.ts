@@ -11,7 +11,7 @@
 
 import { hash, verify, type Algorithm } from '@node-rs/argon2';
 
-/** Shared by the login password here and (in the browser) the vault KEK in P4. */
+/** Shared by the login password here and, in the browser, by the vault's key derivation. */
 export const ARGON2_OPTIONS = {
   // `Algorithm` is an ambient const enum, which `verbatimModuleSyntax` cannot read at
   // runtime; 2 is `Algorithm.Argon2id` (0 is Argon2d, 1 is Argon2i).

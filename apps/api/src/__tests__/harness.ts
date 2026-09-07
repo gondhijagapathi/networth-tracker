@@ -138,12 +138,20 @@ export class TestClient {
     return this.send('patch', path, body, options);
   }
 
+  async put(
+    path: string,
+    body?: unknown,
+    options: RequestOptions = {},
+  ): Promise<supertest.Response> {
+    return this.send('put', path, body, options);
+  }
+
   async delete(path: string, options: RequestOptions = {}): Promise<supertest.Response> {
     return this.send('delete', path, undefined, options);
   }
 
   private async send(
-    method: 'get' | 'post' | 'patch' | 'delete',
+    method: 'get' | 'post' | 'patch' | 'put' | 'delete',
     path: string,
     body?: unknown,
     options: RequestOptions = {},
