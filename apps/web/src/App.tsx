@@ -1,65 +1,70 @@
-import { useEffect, useState } from 'react';
-import { formatCompactINR, formatINR } from '@networth/shared';
-import { applyTheme, readTheme, type Theme } from './lib/theme.js';
-
 /**
- * P0 shell. This exists to prove the toolchain, the theme tokens and the
- * responsive layout end to end. Real routing and data arrive in P1–P3.
+ * Routing and the two states the whole application has: signed in, and not.
+ *
+ * Everything below `RequireSession` can assume a user, which is what keeps every screen
+ * free of "if there is no session" branches. While the session is still being resolved
+ * neither branch renders — showing a sign-in form for the half-second before `/auth/me`
+ * answers would flash a login page at somebody who is already signed in, on every refresh.
  */
+
+import { useEffect } from 'react';
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import type { ReactNode } from 'react';
+import { AppShell } from './components/AppShell.js';
+import { Skeleton } from './components/ui.js';
+import { useSession } from './lib/session.js';
+import { AssetDetail } from './routes/AssetDetail.js';
+import { AssetForm } from './routes/AssetForm.js';
+import { AssetList } from './routes/AssetList.js';
+import { Dashboard } from './routes/Dashboard.js';
+import { Performance } from './routes/Performance.js';
+import { SignIn } from './routes/SignIn.js';
+
 export function App() {
-  const [theme, setTheme] = useState<Theme>(() => readTheme());
-  const [privacy, setPrivacy] = useState(false);
-
-  useEffect(() => {
-    applyTheme(theme);
-  }, [theme]);
-
-  const netWorth = 1_24_56_789_00; // paise — placeholder until P2 lands
-
   return (
-    <div className={privacy ? 'privacy-on min-h-dvh' : 'min-h-dvh'}>
-      <header className="sticky top-0 z-10 border-b backdrop-blur-md">
-        <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-3">
-          <span className="text-sm font-semibold tracking-tight">Net Worth</span>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setPrivacy((p) => !p)}
-              className="rounded-lg px-3 py-1.5 text-xs font-medium"
-              style={{ background: 'var(--surface-overlay)', color: 'var(--text-secondary)' }}
-              aria-pressed={privacy}
-            >
-              {privacy ? 'Show amounts' : 'Hide amounts'}
-            </button>
-            <button
-              type="button"
-              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-              className="rounded-lg px-3 py-1.5 text-xs font-medium"
-              style={{ background: 'var(--surface-overlay)', color: 'var(--text-secondary)' }}
-            >
-              {theme === 'dark' ? 'Light' : 'Dark'}
-            </button>
-          </div>
-        </div>
-      </header>
-
-      <main className="mx-auto max-w-5xl px-4 py-6">
-        <section className="surface-card p-5 sm:p-6">
-          <p className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
-            Total net worth
-          </p>
-          <p className="sensitive tabular mt-1 text-3xl font-semibold tracking-tight sm:text-4xl">
-            {formatINR(netWorth, { paise: false })}
-          </p>
-          <p className="sensitive tabular mt-1 text-sm" style={{ color: 'var(--text-secondary)' }}>
-            {formatCompactINR(netWorth)}
-          </p>
-        </section>
-
-        <p className="mt-6 text-sm" style={{ color: 'var(--text-secondary)' }}>
-          Scaffold only — see <code>docs/TASKS.md</code> for what lands next.
-        </p>
-      </main>
-    </div>
+    <Routes>
+      <Route path="/sign-in" element={<SignIn />} />
+      <Route
+        path="*"
+        element={
+          <RequireSession>
+            <AppShell>
+              <ScrollToTop />
+              <Routes>
+                <Route path="/" element={<Dashboard />} />
+                <Route path="/assets" element={<AssetList />} />
+                <Route path="/assets/new" element={<AssetForm mode="create" />} />
+                <Route path="/assets/:id" element={<AssetDetail />} />
+                <Route path="/assets/:id/edit" element={<AssetForm mode="edit" />} />
+                <Route path="/performance" element={<Performance />} />
+                <Route path="*" element={<Navigate to="/" replace />} />
+              </Routes>
+            </AppShell>
+          </RequireSession>
+        }
+      />
+    </Routes>
   );
+}
+
+function RequireSession({ children }: { children: ReactNode }) {
+  const { status } = useSession();
+
+  if (status === 'loading') {
+    return (
+      <div className="mx-auto max-w-5xl space-y-4 p-4">
+        <Skeleton className="h-32" />
+        <Skeleton className="h-64" />
+      </div>
+    );
+  }
+  if (status === 'anonymous') return <Navigate to="/sign-in" replace />;
+  return <>{children}</>;
+}
+
+/** A route change on a phone should start at the top, not halfway down the last list. */
+function ScrollToTop() {
+  const { pathname } = useLocation();
+  useEffect(() => window.scrollTo(0, 0), [pathname]);
+  return null;
 }
