@@ -39,6 +39,7 @@ import {
 } from '../lib/totp.js';
 import { recordAudit } from './audit.service.js';
 import { findRedeemableInvite, markInviteConsumed } from './invite.service.js';
+import { linkNomineeAccounts } from './nominee.service.js';
 import { issueSession, revokeAllSessions, type IssuedSession } from './session.service.js';
 
 export interface AuthResult {
@@ -98,6 +99,11 @@ export async function register(
   });
 
   ctx.inviteLimiter.reset(ip ?? 'unknown');
+
+  // An heir who registers becomes a live nomination here, not at the invite. A nomination
+  // can be recorded for somebody who never signs up, and somebody can sign up from an
+  // invite issued for a different reason entirely; matching on the address covers both.
+  linkNomineeAccounts(ctx, { id: user.id, email: user.email }, ip);
 
   recordAudit(ctx, {
     actorUserId: user.id,

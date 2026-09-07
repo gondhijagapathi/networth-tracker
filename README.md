@@ -113,9 +113,24 @@ All routes are under `/api`. Sessions are cookie-based; mutating requests must e
 | `GET`/`POST` | `/assets/:id/transactions` | Transaction history; record a movement |
 | `PATCH`/`DELETE` | `/assets/:id/transactions/:txId` | Correct or remove a transaction |
 | `GET`/`POST` | `/instruments[/:id]` | Search the scheme/share catalogue; find or create |
+| `GET`/`POST` | `/vault` | Whether a vault exists and how full it is; create one |
+| `POST` | `/vault/unlock`, `/unlock/confirm` | Fetch the wrapped key material (metered, audited); report success |
+| `POST` | `/vault/rekey` | Change the vault passphrase — rewraps the key, re-encrypts nothing |
+| `GET`/`POST`/`PATCH`/`DELETE` | `/vault/items[/:id]` | Encrypted item CRUD; ciphertext only |
+| `GET`/`POST`/`DELETE` | `/vault/documents[/:id]` | Encrypted uploads; `/:id/content` streams the ciphertext |
+| `GET`/`POST`/`PATCH`/`DELETE` | `/nominees[/:id]` | Name an heir, change what they see, revoke |
+| `POST` | `/nominees/:id/invite` | Issue a one-time code for a read-only heir account |
+| `GET`/`POST` | `/nominees/:id/public-key`, `/escrow`, `/release` | Wrap the data key to a nominee, seal it, hand it over |
+| `GET`/`PUT`/`POST` | `/estate/deadman[/checkin,/cancel]` | Configure the switch, check in, cancel a grace period |
+| `GET` | `/estate` | Estates you have been named in, and whether each vault has opened |
+| `POST` | `/estate/:ownerId/key` | Fetch a released escrow — audit-logged on every read |
+| `GET` | `/estate/:ownerId/items`, `/documents` | A released vault's ciphertext, for an heir to decrypt |
+| `GET` | `/estate/claim-kit` | The claim kit skeleton; the browser merges the vault into it |
 
 Every asset route is scoped: a caller outside an asset's scope is told it does not exist.
-Grants are read-only, so a shared asset is refused for writes in the same terms.
+Grants are read-only, so a shared asset is refused for writes in the same terms. Vault routes
+are never scoped by a grant at all — an heir reads a released vault through `/estate`, and
+there is no path by which one user's session reads another's vault items directly.
 
 ## Backup and restore
 
@@ -129,9 +144,13 @@ Full details, including a disaster-recovery checklist: [`docs/BACKUP.md`](docs/B
 ## Security
 
 Vault contents — bank logins, policy numbers, demat credentials, locker locations — are
-encrypted **in your browser** with a key derived from a separate vault passphrase. The server
-stores ciphertext and has no code path that can decrypt it, which also means backups are safe
-by construction.
+encrypted **in your browser** with a key derived from a separate vault passphrase using
+Argon2id. The server stores ciphertext, holds no value it could check a passphrase against,
+and has no code path that can decrypt any of it — which also means backups are safe by
+construction. Uploaded documents are encrypted too, filename included.
+
+Nobody can reset a forgotten vault passphrase: not an administrator, not whoever runs the
+server. That is the point, and the app says so before you choose one.
 
 This is self-hosted software for a small trusted circle. It assumes you control the machine.
 Read [`docs/SECURITY-MODEL.md`](docs/SECURITY-MODEL.md) — including the section on what it

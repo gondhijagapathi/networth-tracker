@@ -47,6 +47,26 @@ export const INVITE_POLICY: RateLimitPolicy = {
   message: 'Too many invalid invite codes from this address.',
 };
 
+/**
+ * Vault unlock.
+ *
+ * What this can and cannot do is worth stating plainly. The server never sees the vault
+ * passphrase, so it cannot tell a wrong one from a right one — this limiter throttles
+ * *retrieval of the wrapped key material*, and each retrieval costs a slot until the client
+ * reports that it opened the vault. That bounds a stolen session cookie quietly pulling key
+ * material over and over, and it puts every attempt in the audit log.
+ *
+ * It does nothing at all about an attacker who has copied `networth.db`. Against that, the
+ * only defence is Argon2id's cost, which is why the parameters are what they are.
+ */
+export const VAULT_POLICY: RateLimitPolicy = {
+  freeAttempts: 5,
+  baseDelaySeconds: 5,
+  maxDelaySeconds: 900,
+  windowSeconds: 3600,
+  message: 'Too many vault unlock attempts. Wait a moment and try again.',
+};
+
 interface Entry {
   failures: number;
   /** Epoch ms before which no attempt is allowed. */

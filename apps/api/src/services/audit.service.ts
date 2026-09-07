@@ -38,7 +38,36 @@ export type AuditAction =
   | 'asset.created'
   | 'asset.archived'
   | 'transaction.deleted'
-  | 'instrument.created';
+  | 'instrument.created'
+  // The vault and the estate are where the audit log stops being a nicety. A released
+  // escrow hands somebody the keys to a household; "when, and what opened it" has to be
+  // answerable months later, by which time nobody remembers.
+  | 'vault.created'
+  | 'vault.rekeyed'
+  | 'vault.unlock_requested'
+  | 'vault.unlocked'
+  | 'vault.item_created'
+  | 'vault.item_updated'
+  | 'vault.item_deleted'
+  | 'vault.document_uploaded'
+  | 'vault.document_downloaded'
+  | 'vault.document_deleted'
+  | 'nominee.created'
+  | 'nominee.updated'
+  | 'nominee.invited'
+  | 'nominee.accepted'
+  | 'nominee.revoked'
+  | 'escrow.sealed'
+  | 'escrow.released'
+  | 'escrow.revoked'
+  | 'escrow.read'
+  | 'deadman.configured'
+  | 'deadman.checkin'
+  | 'deadman.warned'
+  | 'deadman.grace_started'
+  | 'deadman.cancelled'
+  | 'deadman.fired'
+  | 'claimkit.generated';
 
 export interface AuditEntry {
   actorUserId?: string | null;

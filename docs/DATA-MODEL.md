@@ -31,7 +31,7 @@ SQLite, WAL mode, foreign keys on. Drizzle ORM defines the schema in
 
 | Table | Purpose |
 | ----- | ------- |
-| `users` | email (lowercased, unique), argon2id `password_hash`, name, role (`admin`/`member`/`nominee`), status (`active`/`suspended`), `last_active_at`, encrypted TOTP secret. The RSA keypair columns arrive with the vault in P4 |
+| `users` | email (lowercased, unique), argon2id `password_hash`, name, role (`admin`/`member`/`nominee`), status (`active`/`suspended`), `last_active_at`, encrypted TOTP secret. The RSA keypair lives in `vault_keys`, not here — it is wrapped by the vault passphrase and has no meaning without one |
 | `invites` | code hash, email, role, expiry, `consumed_by`. The only path to an account |
 | `refresh_tokens` | HMAC'd token, family id, device label, expiry, revoked flag, successor id. One row per issued token; rotation writes a new row and revokes the old |
 | `recovery_codes` | hashed single-use TOTP recovery codes, `used_at` |
@@ -46,13 +46,31 @@ SQLite, WAL mode, foreign keys on. Drizzle ORM defines the schema in
 
 | Table | Purpose |
 | ----- | ------- |
-| `vault_keys` | user, `wrapped_dek`, KDF params (salt, m, t, p) |
-| `vault_items` | owner, optional `asset_id`, kind (`login`/`policy`/`locker`/`contact`/`instruction`), label, `{iv, ciphertext, tag}` |
-| `vault_escrow` | owner, grantee, DEK wrapped to grantee public key, state (`sealed`/`released`/`revoked`), released_at |
-| `dead_man_switch` | user, enabled, `inactivity_days`, `last_checkin_at`, warn stage, state (`armed`/`warning`/`grace`/`triggered`) |
+| `vault_keys` | user (PK), `kdf_salt`, `kdf_params` (JSON: algorithm, memory, iterations, parallelism), `wrapped_dek`, `public_key_jwk`, `wrapped_private_key` |
+| `vault_items` | owner, optional `asset_id`, kind (`bank_login`/`card`/`demat`/`policy`/`locker`/`credential`/`document_location`/`instruction`/`note`), `payload` |
+| `documents` | owner, optional `asset_id`, `meta`, `size_bytes`, `storage_path`, sha256 |
+| `vault_escrow` | owner, nominee, grantee, DEK wrapped to the grantee's public key, `public_key_fingerprint`, state (`sealed`/`released`/`revoked`), `release_reason` (`owner`/`deadman`), released_at, revoked_at |
+| `dead_man_switch` | user (PK), enabled, `inactivity_days`, `grace_days`, `last_checkin_at`, stage (`idle`/`warned_50`/`warned_75`/`warned_90`/`grace`/`fired`), `grace_started_at`, `fired_at` |
 
-Only `vault_items` and `vault_escrow` hold ciphertext the server cannot read. Labels are
-plaintext so the vault list is browsable while locked.
+Encrypted values are stored as the JSON envelope `{v, iv, ct}` the browser produced, in one
+column, verbatim — the format version travels with the ciphertext into a backup and out
+again. A `CHECK` constraint on each such column requires `$.ct` to be present, so a row that
+is not an envelope cannot be written by anything, this application included.
+
+**What is in the clear, and why.** A vault item's `kind` and `asset_id` are plaintext so the
+app can say "this deposit has two vault items" on a locked screen and an owner can navigate
+without unlocking. Everything else — the label, the username, the secret, the full account
+number, the note to an heir — is inside `payload`. Documents go further: even the filename
+and MIME type are encrypted, in `meta`, and the ciphertext on disk carries its own IV as a
+prefix so a blob recovered from a backup is decryptable without this database.
+
+There is deliberately **no verifier column**. Checking a vault passphrase happens when the
+AES-GCM tag on `wrapped_dek` authenticates, in the browser. Anything here that the server
+could check a passphrase against would be a free offline oracle for whoever copied the file.
+
+`public_key_jwk` is plaintext by design: an owner has to be able to wrap their data key to a
+nominee who is not present, and asynchronous escrow cannot be done with a shared secret. The
+private half is wrapped by that user's own KEK in `wrapped_private_key`.
 
 ## Assets
 
@@ -89,7 +107,7 @@ positive and net worth subtracts these rows rather than storing negative values.
 | ----- | ------- |
 | `transactions` | asset, date, type (`buy`/`sell`/`sip`/`dividend`/`interest`/`deposit`/`withdrawal`/`premium`/`emi`), units, amount, price, charges, notes. Signed — a sell carries negative units — because sign, not the type name, is what the cost-basis and XIRR maths reads |
 | `valuations` | **append-only** `(asset_id, as_of, value_paise, source)`. Source is `manual`, `amfi`, `yahoo` or `computed`. Never updated in place |
-| `documents` | asset, filename, mime, size, `storage_path`, sha256, encrypted flag |
+| `documents` | asset, encrypted `meta` (filename and MIME), size, `storage_path`, sha256. Always encrypted — see the vault section |
 
 ## Key relationships
 
@@ -116,3 +134,8 @@ users ──< access_grants   (owner → grantee; consulted by every scoped read
   on these.
 - `access_grants(grantee_user_id, scope)` — the permission check on every request.
 - `transactions(asset_id, date)` — XIRR cashflow assembly.
+- `vault_escrow(nominee_id)` — unique. Exactly one wrapped key per nomination, so "release"
+  is never ambiguous about which key it means.
+- `vault_escrow(grantee_user_id, state)` — the heir's portal, and the only index that
+  answers "what has been released to me".
+- `dead_man_switch(enabled, stage)` — the hourly sweep reads this and nothing else.

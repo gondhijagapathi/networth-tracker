@@ -6,7 +6,7 @@ here says so and its tests pass.
 
 **Status key:** `[ ]` pending · `[~]` in progress · `[x]` done · `[!]` blocked
 
-Last updated: 2026-09-07 — P3 complete, 287 tests passing, 0 npm vulnerabilities
+Last updated: 2026-09-07 — P4 and P5 complete, 375 tests passing, 0 npm vulnerabilities
 
 ---
 
@@ -153,23 +153,68 @@ Deliberately not in this phase:
 
 ## P4 — Zero-knowledge vault
 
-- [ ] Argon2id KDF in browser (WASM), AES-256-GCM item encryption
-- [ ] Per-user RSA-OAEP keypair; private key wrapped by KEK
-- [ ] Vault unlock / auto-lock (15 min idle), key held in memory only
-- [ ] Vault item CRUD — server accepts ciphertext only
-- [ ] Encrypted document upload
-- [ ] Tests: round-trip, wrong passphrase fails, plaintext payloads rejected
+Delivered together with P5: the escrow in P5 is the reason the keypair in P4 exists, and
+building the two apart would have meant shipping a keypair with nothing to wrap to.
+
+- [x] Argon2id KDF in the browser (`hash-wasm`, no `SharedArrayBuffer`, so no cross-origin
+      isolation headers to configure), AES-256-GCM item encryption
+- [x] Per-user RSA-OAEP-2048 keypair; public key plaintext, private key wrapped by the KEK
+- [x] Vault unlock, auto-lock after 15 minutes idle, keys held in refs and never in
+      `localStorage`; a reload locks the vault
+- [x] Vault item CRUD — the server accepts a `{v, iv, ct}` envelope and nothing else, at the
+      Zod schema and again as a SQLite `CHECK`
+- [x] Encrypted document upload: filename and MIME encrypted too, ciphertext IV-prefixed on
+      disk so a blob restored from a backup needs nothing from the database
+- [x] Passphrase change that rewraps the key rather than re-encrypting every item
+- [x] Vault-unlock rate limiting, deferred here from P1, plus an audit row per retrieval
+- [x] Tests: round-trip through the real API, wrong passphrase fails, seven shapes of
+      plaintext-looking payload rejected, one user's vault invisible to another — plus the
+      browser's `vaultCrypto.ts` tested as it ships (Argon2id at the real parameters,
+      tampered ciphertext rejected, private keys non-extractable), so the mirror the API
+      tests use cannot drift away from it unnoticed
 
 ## P5 — Nominees, dead-man switch & claim kit
 
-- [ ] Nominee invite and acceptance
-- [ ] Read-only nominee portal (`summary` / `full` access levels)
-- [ ] DEK escrow wrapped to nominee public key, `sealed` state
-- [ ] Dead-man switch: check-in, warning stages, grace period, cancel
-- [ ] Owner-initiated manual release
-- [ ] Claim-kit PDF generation (per asset and per household)
-- [ ] Audit log for every vault read, release and state change
-- [ ] Tests: state machine, nominee writes rejected, escrow unwrap
+- [x] Nominee invite (an ordinary invite with `role: 'nominee'`) and acceptance, which links
+      on registration by email address and writes the access grant
+- [x] Read-only nominee portal; `summary` stops short of asset detail and of the claim kit
+- [x] DEK escrow wrapped to the nominee's public key, `sealed` until released, with the key
+      fingerprint recomputed server-side so an owner cannot be tricked into wrapping to a
+      substituted key
+- [x] Dead-man switch: check-in, warning stages at 50/75/90%, grace period, cancel — and an
+      hourly sweep that derives the stage from elapsed silence, so an ordinary sign-in during
+      the grace period cancels it without the owner finding a button
+- [x] Owner-initiated manual release
+- [x] Claim kit per asset and per household, printed from the browser
+- [x] Audit log for every vault read, escrow read, release and state change
+- [x] Tests: the full state machine over a moved clock, nominee writes rejected everywhere,
+      escrow unwrap end to end — an heir decrypting a secret they could not read one request
+      earlier
+
+Worth stating plainly about both phases:
+
+- **Warnings are recorded, not emailed.** There is no mail transport in this build, so the
+  50/75/90% stages write audit rows and raise a banner the owner sees on their next visit.
+  That is weaker than the design in PLAN.md intends. Email and push are in the backlog, and
+  saying so here is better than a checked box implying an email that never went out.
+- **Release is one-way.** Revoking a nominee closes their grant and revokes the escrow, so
+  the server will not serve the key again — but an heir who already fetched it holds a copy
+  of the data key. Taking that back would mean re-encrypting every item under a new key. The
+  UI says so at the point of release.
+- **The claim kit prints from the browser rather than rendering a PDF on the server.** The
+  kit is only complete once vault plaintext is merged into it, and the only place that
+  plaintext exists is the browser. A server-rendered PDF would require the server to hold it,
+  and the zero-knowledge claim would stop being true. `window.print()` against a print
+  stylesheet produces the same PDF and keeps the guarantee.
+
+Deliberately not in these phases:
+
+- **Re-encrypting the vault under a new data key.** A passphrase change rewraps the key, which
+  is the operation people actually want. Rotating the *data* key — the only real answer to a
+  released escrow — touches every item and every document at once, and belongs next to the
+  backup and restore machinery in **P8** that can take a snapshot before it starts.
+- **A vault for household partners.** Sharing a vault between two living people is not the
+  same problem as handing one to an heir, and the consent flow it needs is **P6**'s.
 
 ## P6 — Household & partner merge
 

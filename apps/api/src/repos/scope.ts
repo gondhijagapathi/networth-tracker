@@ -8,7 +8,7 @@
  * household's finances to somebody else.
  *
  * A scope is always read-only beyond the caller's own rows. There is no grant that confers
- * writes — a partner in P6 and a nominee in P5 both read, and only the owner writes.
+ * writes — a nominee reads, a partner will read in P6, and only the owner ever writes.
  */
 
 import { and, eq, gt, isNull, or } from 'drizzle-orm';

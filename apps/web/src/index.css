@@ -300,3 +300,65 @@
     color: var(--color-brand-400);
   }
 }
+
+/*
+ * Print.
+ *
+ * The claim kit is the only page here meant to leave the screen, and it is read on paper at
+ * a bank counter. So: white ground and black text whatever the theme, no navigation, no
+ * blur, and an entry that never breaks across a page — an heir should not have to turn a
+ * sheet over to find out which forms go with the account they are looking at.
+ */
+@media print {
+  :root,
+  :root[data-theme='dark'],
+  :root[data-theme='light'] {
+    --surface-base: #fff;
+    --surface-raised: #fff;
+    --surface-overlay: #fff;
+    --surface-sunken: #fff;
+    --border-subtle: #bbb;
+    --border-strong: #888;
+    --text-primary: #000;
+    --text-secondary: #333;
+    --text-muted: #555;
+    --shadow-card: none;
+    --color-warn: #7a4a00;
+  }
+
+  body {
+    background: #fff;
+  }
+
+  /* Everything that is chrome rather than content. */
+  .no-print,
+  nav,
+  aside,
+  header.sticky {
+    display: none !important;
+  }
+
+  main {
+    max-width: none;
+    padding: 0;
+  }
+
+  /* A printed net worth is the whole point of printing it. */
+  .privacy-on .sensitive {
+    filter: none;
+  }
+
+  .print-sheet {
+    font-size: 10pt;
+  }
+
+  .claim-entry {
+    break-inside: avoid;
+    border: 1px solid #bbb;
+    box-shadow: none;
+  }
+
+  a[href]::after {
+    content: '';
+  }
+}

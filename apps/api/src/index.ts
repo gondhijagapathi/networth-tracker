@@ -3,6 +3,7 @@ import { createApp } from './app.js';
 import { createContext } from './context.js';
 import { createDb } from './db/client.js';
 import { runMigrations } from './db/migrate.js';
+import { evaluateDeadManSwitches } from './services/deadman.service.js';
 import { ensureBootstrapInvite } from './services/invite.service.js';
 
 const config = loadConfig();
@@ -32,9 +33,45 @@ const server = app.listen(config.API_PORT, config.API_HOST, () => {
   console.log(`networth-tracker api listening on http://${config.API_HOST}:${config.API_PORT}`);
 });
 
+/**
+ * The dead-man sweep.
+ *
+ * A plain interval rather than a cron dependency: the switch measures elapsed days, so the
+ * only thing that matters is that it runs *often enough*, not that it runs at 02:00. Once
+ * an hour means a stage change is visible within the hour and a machine that was asleep
+ * catches up on its next tick, because every stage is derived from timestamps rather than
+ * from how many times this has fired.
+ *
+ * It runs once at boot for the same reason: a server that was off for a fortnight should
+ * not wait another hour to notice.
+ */
+const SWEEP_INTERVAL_MS = 3_600_000;
+
+function sweep(): void {
+  try {
+    const result = evaluateDeadManSwitches(ctx);
+    if (result.fired.length > 0 || result.graced.length > 0) {
+      // eslint-disable-next-line no-console
+      console.log(
+        `dead-man sweep: ${result.graced.length} entered grace, ${result.fired.length} released`,
+      );
+    }
+  } catch (error) {
+    // A failed sweep must not take the process down: the app is still perfectly usable, and
+    // the next tick will try again.
+    console.warn('dead-man sweep failed', error);
+  }
+}
+
+sweep();
+const sweepTimer = setInterval(sweep, SWEEP_INTERVAL_MS);
+// Without this a `node dist/index.js` would refuse to exit on its own.
+sweepTimer.unref();
+
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
     // Checkpoint the WAL and close cleanly so the next start does not have to recover.
+    clearInterval(sweepTimer);
     server.close(() => {
       close();
       process.exit(0);

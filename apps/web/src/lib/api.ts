@@ -120,10 +120,62 @@ export const api = {
   get: <T>(path: string, signal?: AbortSignal) => request<T>(path, { signal }),
   post: <T>(path: string, body?: unknown) => request<T>(path, { method: 'POST', body }),
   patch: <T>(path: string, body?: unknown) => request<T>(path, { method: 'PATCH', body }),
+  put: <T>(path: string, body?: unknown) => request<T>(path, { method: 'PUT', body }),
   delete: <T>(path: string) => request<T>(path, { method: 'DELETE' }),
   /** The refresh endpoint must not recurse into its own retry. */
   refresh: () => request<unknown>('/auth/refresh', { method: 'POST', noRetry: true }),
 };
+
+/* -------------------------------------------------------------------------- */
+/* Binary transfers                                                           */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Upload an already-encrypted file.
+ *
+ * The bytes go up raw rather than base64 inside JSON, which would inflate a 10 MB scan to
+ * 13 MB and buy nothing. The encrypted `{filename, mime}` envelope rides in a header
+ * instead: it is a few hundred bytes, and putting it in the body would mean a multipart
+ * encoding on both sides to find it again.
+ */
+export async function upload<T>(path: string, bytes: Uint8Array, meta: unknown): Promise<T> {
+  const response = await fetch(`/api${path}`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: {
+      'content-type': 'application/octet-stream',
+      'x-vault-meta': base64Url(JSON.stringify(meta)),
+      ...csrfHeader(),
+    },
+    body: bytes as BodyInit,
+  });
+
+  if (!response.ok) throw await toApiError(response);
+  return (await response.json()) as T;
+}
+
+/** Fetch a document's ciphertext. The caller decrypts it; this never sees a plaintext. */
+export async function binary(path: string): Promise<ArrayBuffer> {
+  const response = await fetch(`/api${path}`, { credentials: 'include' });
+  if (!response.ok) throw await toApiError(response);
+  return response.arrayBuffer();
+}
+
+async function toApiError(response: Response): Promise<ApiError> {
+  const body = (safeParse(await response.text()) as ApiErrorBody | null)?.error;
+  return new ApiError(
+    response.status,
+    body ?? { code: 'internal', message: 'Something went wrong.' },
+  );
+}
+
+/** UTF-8 to unpadded base64url, for the metadata header. */
+function base64Url(value: string): string {
+  const bytes = new TextEncoder().encode(value);
+  let binaryString = '';
+  for (const byte of bytes) binaryString += String.fromCharCode(byte);
+  return btoa(binaryString).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
 
 function csrfHeader(): Record<string, string> {
   const token = readCookie('nt_csrf');
