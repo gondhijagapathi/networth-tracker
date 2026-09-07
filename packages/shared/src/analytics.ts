@@ -11,7 +11,8 @@
  * read them and a person can argue with them.
  */
 
-import type { AssetType } from './assets.js';
+import { z } from 'zod';
+import { isoDateSchema, type AssetType } from './assets.js';
 import type { Paise } from './money.js';
 
 /* -------------------------------------------------------------------------- */
@@ -309,6 +310,25 @@ export interface PerformanceEntry {
   cagr: number | null;
 }
 
+/**
+ * A class's return, computed from every cashflow in it rather than from its members'
+ * rates.
+ *
+ * There is no CAGR here, and none on the portfolio either. CAGR describes one sum in and
+ * one value out; a class is a dozen assets bought on a dozen dates, so the only honest
+ * annualised figure is XIRR over the pooled flows. Averaging the members' CAGRs — or worse,
+ * weighting them — would produce a number that looks like a return and is not one.
+ */
+export interface ClassPerformance {
+  assetClass: AssetClass;
+  /** How many assets of this class contributed, so a rate from one holding reads as one. */
+  assetCount: number;
+  investedPaise: Paise;
+  valuePaise: Paise;
+  gainPaise: Paise;
+  xirr: number | null;
+}
+
 export interface PerformanceResponse {
   portfolio: {
     investedPaise: Paise;
@@ -316,8 +336,55 @@ export interface PerformanceResponse {
     gainPaise: Paise;
     xirr: number | null;
   };
+  classes: ClassPerformance[];
   assets: PerformanceEntry[];
 }
+
+/* -------------------------------------------------------------------------- */
+/* Query contracts                                                            */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * How finely the net worth chart is sampled.
+ *
+ * Monthly by default. A daily series over five years is eighteen hundred points, which is
+ * more than a phone screen has pixels and more than the underlying data justifies: outside
+ * of holdings, most assets are valued once a month at best.
+ */
+export const SERIES_INTERVALS = ['day', 'week', 'month'] as const;
+export type SeriesInterval = (typeof SERIES_INTERVALS)[number];
+
+/**
+ * The window is expressed in months back from `to` rather than as a mandatory `from`, so
+ * the common request — "the last year" — does not require the client to do date arithmetic
+ * the server is about to redo anyway.
+ */
+export const netWorthQuerySchema = z.object({
+  from: isoDateSchema.optional(),
+  to: isoDateSchema.optional(),
+  months: z.coerce.number().int().min(1).max(240).default(24),
+  interval: z.enum(SERIES_INTERVALS).default('month'),
+});
+export type NetWorthQuery = z.infer<typeof netWorthQuerySchema>;
+
+export const allocationQuerySchema = z.object({
+  by: z.enum(ALLOCATION_DIMENSIONS).default('class'),
+  asOf: isoDateSchema.optional(),
+});
+export type AllocationQuery = z.infer<typeof allocationQuerySchema>;
+
+export const dashboardQuerySchema = z.object({
+  asOf: isoDateSchema.optional(),
+  by: z.enum(ALLOCATION_DIMENSIONS).default('class'),
+  months: z.coerce.number().int().min(1).max(240).default(12),
+  interval: z.enum(SERIES_INTERVALS).default('month'),
+});
+export type DashboardQuery = z.infer<typeof dashboardQuerySchema>;
+
+export const performanceQuerySchema = z.object({
+  asOf: isoDateSchema.optional(),
+});
+export type PerformanceQuery = z.infer<typeof performanceQuerySchema>;
 
 /* -------------------------------------------------------------------------- */
 /* Pure helpers                                                               */

@@ -307,18 +307,22 @@ export function scheduleContributions(terms: DepositTerms, until: string): Depos
         : null;
   if (installment <= 0 || cadence === null) return out;
 
-  const years = CONTRIBUTION_YEARS[terms.kind];
-  const bounds = [until, terms.maturesOn ?? until];
-  if (years !== undefined) bounds.push(addMonths(terms.startedOn, years * 12));
-  const last = bounds.reduce((a, b) => (a < b ? a : b));
-
   const step = cadence === 'monthly' ? 1 : 12;
+  const years = CONTRIBUTION_YEARS[terms.kind];
+  // The window closes *before* the date it is measured to: a sixty-month recurring deposit
+  // maturing on 1 January pays its last instalment on 1 December, and a fifteen-year PPF
+  // account opened on 1 April 2000 makes its fifteenth and final deposit on 1 April 2014.
+  const windowEnd = years === undefined ? null : addMonths(terms.startedOn, years * 12);
+  const maturesOn = terms.maturesOn ?? null;
+
   // Guard rather than trust the dates: a typo of 1925 for 2025 must not spin here.
   const maxPayments = cadence === 'monthly' ? 12 * 30 : 30;
 
   for (let i = 0; i < maxPayments; i += 1) {
     const date = addMonths(terms.startedOn, i * step);
-    if (date > last) break;
+    if (date > until) break;
+    if (maturesOn !== null && date >= maturesOn) break;
+    if (windowEnd !== null && date >= windowEnd) break;
     out.push({ date, amountPaise: installment });
   }
   return out;

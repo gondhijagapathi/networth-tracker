@@ -43,6 +43,15 @@ describe('xirr', () => {
         { date: '2025-06-01', amount: -100 },
       ]),
     ).toBeNull();
+    // Bought and valued the same morning. Any rate satisfies NPV = 0 over a zero-length
+    // window, so none of them is an answer — and returning the initial guess would dress
+    // that up as one.
+    expect(
+      xirr([
+        { date: '2025-01-01', amount: -100000 },
+        { date: '2025-01-01', amount: 100000 },
+      ]),
+    ).toBeNull();
   });
 
   it('is insensitive to input order', () => {
