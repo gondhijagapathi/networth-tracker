@@ -71,6 +71,39 @@ Vault ciphertext passes through the API as bytes. There is no server-side code p
 can decrypt it, and the request schemas reject anything plaintext-shaped. See
 [SECURITY-MODEL.md](./SECURITY-MODEL.md).
 
+All of the cryptography lives in `apps/web/src/lib/vaultCrypto.ts` and nowhere else; one
+React provider (`lib/vault.tsx`) holds the keys in refs, and screens ask it to encrypt or
+decrypt rather than ever touching a `CryptoKey`. On the server, `lib/envelope.ts` is the only
+module that turns a ciphertext column into an object and back, which makes "nothing here
+inspects or transforms the ciphertext" a claim you can check by reading one short file.
+
+The module is code-split: Argon2id's WASM is fetched the first time a vault is touched, not
+on first paint, for the same reason the charts are.
+
+## Two locks on an inherited vault
+
+An heir reading an owner's secrets requires two independent things to be true, and they are
+deliberately kept apart:
+
+- the **nomination's access level** is `vault` — the owner's stated intent, enforced by the
+  API through `access_grants` like every other read; and
+- the **escrow is released** — the event that actually happened, enforced by cryptography,
+  because until then the wrapped key is never served.
+
+`assertVaultReleased` in `services/nominee.service.ts` is the one function that checks both,
+so no route can accidentally satisfy only half of the rule.
+
+## The dead-man switch is derived, not driven
+
+`evaluateDeadManSwitches` recomputes each user's stage from elapsed silence every time it
+runs, and only writes when the stage changes. That makes the hourly sweep in `index.ts`
+idempotent and safe to miss: a server that was off for a fortnight catches up on its next
+tick, and a test moves the clock instead of waiting ninety days.
+
+It also means an ordinary sign-in cancels a grace period on its own — below the inactivity
+window the stage is a function of silence in both directions — rather than requiring the
+owner to find a button while the clock runs down.
+
 ## Valuations are append-only
 
 `valuations` is never updated in place. Every price refresh, manual edit or computed

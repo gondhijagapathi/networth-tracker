@@ -57,3 +57,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   filter, sort and search held in the URL, per-type asset detail pages, create and
   edit forms driven by the shared Zod contracts, a returns page, and a privacy
   blur toggle.
+- Zero-knowledge vault (P4): Argon2id key derivation in the browser via WASM, AES-256-GCM
+  item encryption, a per-user RSA-OAEP-2048 keypair with the private half wrapped by the
+  same derived key, unlock with a 15-minute idle auto-lock, and encrypted document upload
+  where even the filename and MIME type are ciphertext. The server accepts a `{v, iv, ct}`
+  envelope and nothing else — enforced at the Zod schema and again as a SQLite `CHECK` — and
+  holds no value it could check a passphrase against.
+- Changing the vault passphrase rewraps the data key rather than re-encrypting every item,
+  and vault-unlock rate limiting, deferred from P1, now that there is an endpoint to meter.
+- Nominees, escrow and the dead-man switch (P5): nominee invite and acceptance, a read-only
+  heir portal at `summary` or `full`, the owner's data key wrapped to a nominee's public key
+  and held sealed, owner-initiated release, and a switch that fires after a configurable
+  silence (default 90 days, floor 30) with warnings at 50/75/90% and a grace period an
+  ordinary sign-in cancels.
+- The escrow records the fingerprint of the key it was wrapped to, recomputed server-side
+  from the key on record, so an owner cannot be tricked into wrapping their data key to a
+  substituted public key.
+- Access level and escrow state are independent locks: a nominee with `vault` access before
+  release sees ciphertext, and a released escrow under a narrower access level yields
+  nothing. Both must open.
+- Claim kit per asset and per household — institution, masked reference, the forms each
+  Indian institution actually asks for (bank DA-1, LIC 3783, EPF Form 20, demat transmission
+  annexures, MF T3), the documents required, and value sitting in unnominated assets. It
+  prints from the browser rather than rendering server-side, because the vault plaintext it
+  merges in exists only there.
+- Audit rows for every vault read, escrow read, release and switch transition.
+- Vault, nominee, inheritance and printable claim-kit screens, with the crypto module
+  code-split so Argon2id's WASM is fetched when a vault is first touched rather than on
+  first paint.
+
+### Changed
+
+- `documents` is now always encrypted: the plaintext `filename`, `mime` and `encrypted`
+  columns are replaced by a single encrypted `meta` envelope. The table had never been
+  written to, so the migration rebuilds it rather than carrying dead columns.
