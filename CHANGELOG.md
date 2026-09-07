@@ -39,3 +39,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Scaled-integer quantities: units and per-unit prices in millionths, so a
   four-decimal NAV survives to the paise.
 - `npm run db:seed -- --email you@example.com` for demo data.
+- Dashboard and analytics (P3): net worth over time, allocation by class,
+  institution, liquidity and type, XIRR and CAGR per asset, class and portfolio,
+  and concentration, liquidity and nomination risk indicators — served from
+  `/api/analytics` and assembled from a single scoped portfolio load, so the
+  summary card, the allocation chart and the last point on the chart are the same
+  figure computed once.
+- A valuation engine that accrues rather than remembers: FD, RD, PPF, SSY, NSC,
+  KVP, MIS and SCSS compound from their own terms, anchored on a reconciled
+  valuation where the owner recorded one; holdings are priced at the most recent
+  NAV or quote on or before the date, falling back to average cost; balances and
+  manual figures are used as written, newest wins and ties go to the human.
+- History is recomputed rather than replayed — every point on the net worth chart
+  is the whole portfolio valued as of that date, so a deposit curves upward from a
+  single opening entry instead of sitting flat until somebody updates it.
+- Web application proper: routing, session-gated shell, dashboard, asset list with
+  filter, sort and search held in the URL, per-type asset detail pages, create and
+  edit forms driven by the shared Zod contracts, a returns page, and a privacy
+  blur toggle.
