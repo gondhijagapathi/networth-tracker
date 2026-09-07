@@ -6,7 +6,7 @@ here says so and its tests pass.
 
 **Status key:** `[ ]` pending · `[~]` in progress · `[x]` done · `[!]` blocked
 
-Last updated: 2026-09-07 — P4 and P5 complete, 375 tests passing, 0 npm vulnerabilities
+Last updated: 2026-09-07 — P6 and P7 complete, 403 tests passing, 0 npm vulnerabilities
 
 ---
 
@@ -18,11 +18,11 @@ Last updated: 2026-09-07 — P4 and P5 complete, 375 tests passing, 0 npm vulner
 | P1 | Authentication & users | `[x]` done |
 | P2 | Data model & asset CRUD | `[x]` done |
 | P3 | Dashboard & analytics | `[x]` done |
-| P4 | Zero-knowledge vault | `[~]` next |
-| P5 | Nominees, dead-man switch & claim kit | `[ ]` pending |
-| P6 | Household & partner merge | `[ ]` pending |
-| P7 | Price providers | `[ ]` pending |
-| P8 | Backup & restore | `[ ]` pending |
+| P4 | Zero-knowledge vault | `[x]` done |
+| P5 | Nominees, dead-man switch & claim kit | `[x]` done |
+| P6 | Household & partner merge | `[x]` done |
+| P7 | Price providers | `[x]` done |
+| P8 | Backup & restore | `[~]` next |
 | P9 | India-specific features | `[ ]` pending |
 | P10 | Polish & v1.0.0 release | `[ ]` pending |
 
@@ -218,23 +218,77 @@ Deliberately not in these phases:
 
 ## P6 — Household & partner merge
 
-- [ ] Household creation, partner invite, two-sided consent
-- [ ] Settings toggle to enable/disable merged view
-- [ ] Merged net worth with attribution (yours / partner / joint)
-- [ ] `ownership_percent` splits so joint assets are not double-counted
-- [ ] `share_mode` (full / summary / none) enforcement
-- [ ] Instant revocation
-- [ ] Tests: revocation cuts access immediately; no double counting
+Delivered together with P7: neither touches the other's tables, and both are additive
+features sitting on top of scoping and pricing infrastructure P2 and P3 already built —
+`resolveScope`, `access_grants` and `ownershipBps` for this phase; `instrument_prices` and
+holding valuation for the next one. There was no reason to ship them apart.
+
+- [x] Household creation, partner invite, two-sided consent
+- [x] Settings toggle to enable/disable merged view
+- [x] Merged net worth with attribution (yours / partner / joint, via the `shared` flag
+      `asset.service.ts` has carried since P2)
+- [x] `ownershipBps` splits so joint assets are not double-counted (unchanged from P2/P3 —
+      this phase adds the grants that let a second person see the split, not the split itself)
+- [x] `shareMode` (full / summary / none) enforcement
+- [x] Instant revocation
+- [x] Tests: revocation cuts access immediately; no double counting
+
+Worth stating about what this phase turned out to be:
+
+- **The merged dashboard, the `Shared` pill and the read-only guard already existed.** P2 and
+  P3 built every consumer of `access_grants` generically, anticipating a household grantee
+  alongside a nominee one — `readableOwnerIds`, `assertCanSeeDetail` and `AssetSummary.shared`
+  never mention "household" by name. What this phase actually added is `household.service.ts`:
+  the consent flow that writes and revokes the grants those consumers already knew how to
+  read. That is a smaller phase than P4/P5 in code, and it is why P6 and P7 fit in one push.
+- **Two consents, not one.** Joining a household (`acceptedAt`) and sharing your own data with
+  it (`shareMode` + `consentedAt`) are separate acts — a member can accept an invitation and
+  still share nothing, which is the Settings toggle TASKS.md called for. A grant only exists
+  once the sharer has done both *and* the recipient has joined.
+- **A grant is re-derived, never hand-edited.** Every mutation — accepting, changing a share
+  mode, leaving — recomputes every directed grant a household's current membership implies,
+  from scratch (`syncHouseholdGrants`). That is more database work than patching one row and
+  removes an entire class of "the grant and the membership drifted apart" bugs.
+
+Deliberately not in this phase:
+
+- **A vault for household partners**, exactly as P4/P5 said: sharing a vault between two living
+  people is a different consent problem than handing one to an heir, and it is not this
+  phase's problem either. A household grant's `scope` is only ever `full` or `summary`.
+- **A second invite system.** Inviting a partner requires an existing account on this
+  instance — self-hosted, invite-only, small circle — so there is no new-account flow to
+  build here the way there was for a nominee who might not exist yet.
 
 ## P7 — Price providers
 
-- [ ] Provider interface with `manual` always available as fallback
-- [ ] AMFI NAV ingest (parse `NAVAll.txt`, upsert `instrument_prices`)
-- [ ] Scheme search / autocomplete by AMFI code, ISIN, name
-- [ ] Stock price provider (pluggable; Yahoo-style default)
-- [ ] Nightly refresh scheduler + manual "refresh now"
-- [ ] Staleness badges and last-updated timestamps
-- [ ] Tests: parser against a fixture, fallback on provider failure
+- [x] Provider interface with `manual` always available as fallback (the existing manual
+      valuation and instrument-price write paths; nothing new to build for it)
+- [x] AMFI NAV ingest (parse `NAVAll.txt`, upsert `instrument_prices`)
+- [x] Scheme search / autocomplete by AMFI code, ISIN, name (built in P2 — `GET /instruments`
+      already searches all three)
+- [x] Stock price provider (pluggable; Yahoo-style default, off unless `STOCK_PRICE_PROVIDER`
+      is set to `yahoo`)
+- [x] Nightly refresh scheduler + manual "refresh now"
+- [x] Staleness badges and last-updated timestamps
+- [x] Tests: parser against a fixture, fallback on provider failure
+
+Worth stating about this phase too:
+
+- **A holding was already priced from `instrument_prices`.** `valuation.service.ts` has taken
+  units times "the most recent price on or before `asOf`" since P3. This phase only had to
+  make that table's rows fresher; the moment AMFI ingest writes one, every holding of that
+  scheme revalues on its next read with no other code path touching it.
+- **`NAV_REFRESH_CRON` is a real cron schedule, not a plain interval.** The dead-man sweep
+  gets away with `setInterval` because it only needs to run *often enough*; AMFI publishes
+  once a day, after the market closes, and a job firing at a random hour would mostly re-fetch
+  an unchanged file. `lib/cron.ts` is a small 5-field cron matcher rather than a dependency —
+  matched against the server's local time, so an operator wanting 20:30 IST sets
+  `TZ=Asia/Kolkata`, same as they would for `cron(8)` itself.
+- **The Yahoo quote endpoint is unauthenticated best-effort.** It is exactly what
+  `STOCK_PRICE_PROVIDER=yahoo` opts into and what PLAN.md called "Yahoo-style" rather than a
+  commitment to a stable third-party API; a provider that starts blocking these requests fails
+  the way any unreachable provider does — an error entry in the refresh result, manual pricing
+  untouched. It is off by default, and `manual` needs no configuration to work.
 
 ## P8 — Backup & restore
 

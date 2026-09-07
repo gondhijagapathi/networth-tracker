@@ -85,6 +85,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Vault, nominee, inheritance and printable claim-kit screens, with the crypto module
   code-split so Argon2id's WASM is fetched when a vault is first touched rather than on
   first paint.
+- Household and partner merge (P6): household creation, a partner invite an existing account
+  accepts, and a per-member share-mode toggle (full / summary / none) that is entirely
+  separate from joining — a member can be part of a household and share nothing. Every
+  directed grant a household's membership implies is recomputed from scratch on each change
+  (`syncHouseholdGrants`) rather than patched in place, so it can never drift from what the
+  members currently consent to. Leaving or being removed closes access in both directions
+  immediately. A `Household` screen exposes all of it.
+- Price providers (P7): an AMFI `NAVAll.txt` parser and ingest that upserts `instrument_prices`
+  by scheme code, a pluggable stock quote provider (off by default; `STOCK_PRICE_PROVIDER=yahoo`
+  turns it on), a "refresh now" endpoint, and `NAV_REFRESH_CRON` driving both nightly via a
+  small dependency-free cron matcher (`lib/cron.ts`). Manual pricing needed no new code — it
+  is the existing write paths — and stays the fallback whenever a provider cannot reach the
+  network or has never heard of an instrument. The asset list shows a "Refresh prices" action
+  and flags a `market`-sourced price as stale once it is more than five days old.
 
 ### Changed
 
