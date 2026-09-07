@@ -16,8 +16,12 @@ import { useSession } from './lib/session.js';
 import { AssetDetail } from './routes/AssetDetail.js';
 import { AssetForm } from './routes/AssetForm.js';
 import { AssetList } from './routes/AssetList.js';
+import { ClaimKit } from './routes/ClaimKit.js';
 import { Dashboard } from './routes/Dashboard.js';
+import { Inheritance } from './routes/Inheritance.js';
+import { Nominees } from './routes/Nominees.js';
 import { Performance } from './routes/Performance.js';
+import { Vault } from './routes/Vault.js';
 import { SignIn } from './routes/SignIn.js';
 
 export function App() {
@@ -37,6 +41,10 @@ export function App() {
                 <Route path="/assets/:id" element={<AssetDetail />} />
                 <Route path="/assets/:id/edit" element={<AssetForm mode="edit" />} />
                 <Route path="/performance" element={<Performance />} />
+                <Route path="/vault" element={<Vault />} />
+                <Route path="/nominees" element={<Nominees />} />
+                <Route path="/inheritance" element={<Inheritance />} />
+                <Route path="/claim-kit" element={<ClaimKit />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
             </AppShell>

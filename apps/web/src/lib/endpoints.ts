@@ -26,7 +26,26 @@ import type {
   UpdateAssetBody,
   ValuationRecord,
 } from '@networth/shared';
-import { api, query } from './api.js';
+import type {
+  ClaimKitResponse,
+  ConfigureDeadManBody,
+  CreateNomineeBody,
+  CreateVaultItemBody,
+  DeadManStatus,
+  EstateSummary,
+  NomineeRecord,
+  PublicKeyJwk,
+  RekeyVaultBody,
+  SealEscrowBody,
+  SetupVaultBody,
+  UpdateNomineeBody,
+  UpdateVaultItemBody,
+  VaultDocumentRecord,
+  VaultItemRecord,
+  VaultKeyMaterial,
+  VaultStatus,
+} from '@networth/shared';
+import { api, binary, query, upload } from './api.js';
 
 export const endpoints = {
   dashboard: (params: { months?: number; by?: string; asOf?: string }, signal?: AbortSignal) =>
@@ -89,4 +108,101 @@ export const endpoints = {
 
   createInstrument: (body: CreateInstrumentBody) =>
     api.post<{ instrument: InstrumentRecord }>('/instruments', body),
+
+  /* ---------------------------------------------------------------------- */
+  /* Vault                                                                  */
+  /* ---------------------------------------------------------------------- */
+
+  vaultStatus: (signal?: AbortSignal) => api.get<VaultStatus>('/vault', signal),
+
+  createVault: (body: SetupVaultBody) => api.post<{ keys: VaultKeyMaterial }>('/vault', body),
+
+  /** Metered and audited on the server; see `lib/rateLimit.ts` for what that does buy. */
+  unlockVault: () => api.post<{ keys: VaultKeyMaterial }>('/vault/unlock'),
+
+  confirmUnlock: () => api.post<void>('/vault/unlock/confirm'),
+
+  rekeyVault: (body: RekeyVaultBody) => api.post<{ keys: VaultKeyMaterial }>('/vault/rekey', body),
+
+  vaultItems: (params: { assetId?: string } = {}, signal?: AbortSignal) =>
+    api.get<{ items: VaultItemRecord[] }>(`/vault/items${query(params)}`, signal),
+
+  createVaultItem: (body: CreateVaultItemBody) =>
+    api.post<{ item: VaultItemRecord }>('/vault/items', body),
+
+  updateVaultItem: (id: string, body: UpdateVaultItemBody) =>
+    api.patch<{ item: VaultItemRecord }>(`/vault/items/${id}`, body),
+
+  deleteVaultItem: (id: string) => api.delete<void>(`/vault/items/${id}`),
+
+  vaultDocuments: (params: { assetId?: string } = {}, signal?: AbortSignal) =>
+    api.get<{ documents: VaultDocumentRecord[] }>(`/vault/documents${query(params)}`, signal),
+
+  /** The body is ciphertext; the encrypted filename rides in a header. */
+  uploadDocument: (ciphertext: Uint8Array, meta: unknown, assetId?: string) =>
+    upload<{ document: VaultDocumentRecord }>(
+      `/vault/documents${query({ assetId })}`,
+      ciphertext,
+      meta,
+    ),
+
+  downloadDocument: (id: string) => binary(`/vault/documents/${id}/content`),
+
+  deleteDocument: (id: string) => api.delete<void>(`/vault/documents/${id}`),
+
+  /* ---------------------------------------------------------------------- */
+  /* Nominees                                                               */
+  /* ---------------------------------------------------------------------- */
+
+  nominees: (signal?: AbortSignal) => api.get<{ nominees: NomineeRecord[] }>('/nominees', signal),
+
+  createNominee: (body: CreateNomineeBody) =>
+    api.post<{ nominee: NomineeRecord }>('/nominees', body),
+
+  updateNominee: (id: string, body: UpdateNomineeBody) =>
+    api.patch<{ nominee: NomineeRecord }>(`/nominees/${id}`, body),
+
+  revokeNominee: (id: string) => api.delete<{ nominee: NomineeRecord }>(`/nominees/${id}`),
+
+  inviteNominee: (id: string) =>
+    api.post<{ nominee: NomineeRecord; code: string }>(`/nominees/${id}/invite`),
+
+  nomineePublicKey: (id: string) =>
+    api.get<{ publicKeyJwk: PublicKeyJwk }>(`/nominees/${id}/public-key`),
+
+  sealEscrow: (id: string, body: SealEscrowBody) =>
+    api.post<{ escrow: NonNullable<NomineeRecord['escrow']> }>(`/nominees/${id}/escrow`, body),
+
+  releaseEscrow: (id: string) =>
+    api.post<{ escrow: NonNullable<NomineeRecord['escrow']> }>(`/nominees/${id}/release`),
+
+  /* ---------------------------------------------------------------------- */
+  /* Estate                                                                 */
+  /* ---------------------------------------------------------------------- */
+
+  estates: (signal?: AbortSignal) => api.get<{ estates: EstateSummary[] }>('/estate', signal),
+
+  estateKey: (ownerId: string) =>
+    api.post<{ wrappedDek: string; releasedAt: string }>(`/estate/${ownerId}/key`),
+
+  estateItems: (ownerId: string, signal?: AbortSignal) =>
+    api.get<{ items: VaultItemRecord[] }>(`/estate/${ownerId}/items`, signal),
+
+  estateDocuments: (ownerId: string, signal?: AbortSignal) =>
+    api.get<{ documents: VaultDocumentRecord[] }>(`/estate/${ownerId}/documents`, signal),
+
+  downloadEstateDocument: (ownerId: string, id: string) =>
+    binary(`/estate/${ownerId}/documents/${id}/content`),
+
+  deadman: (signal?: AbortSignal) => api.get<{ deadman: DeadManStatus }>('/estate/deadman', signal),
+
+  configureDeadman: (body: ConfigureDeadManBody) =>
+    api.put<{ deadman: DeadManStatus }>('/estate/deadman', body),
+
+  deadmanCheckIn: () => api.post<{ deadman: DeadManStatus }>('/estate/deadman/checkin'),
+
+  deadmanCancel: () => api.post<{ deadman: DeadManStatus }>('/estate/deadman/cancel'),
+
+  claimKit: (params: { ownerId?: string } = {}, signal?: AbortSignal) =>
+    api.get<ClaimKitResponse>(`/estate/claim-kit${query(params)}`, signal),
 };

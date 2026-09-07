@@ -44,14 +44,43 @@ const DESTINATIONS: Destination[] = [
       <path d="M4 19h16M6 16V9m5 7V5m5 11v-4" strokeWidth="2" fill="none" stroke="currentColor" />
     ),
   },
-].map((entry) => ({
-  ...entry,
-  icon: (
-    <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true">
-      {entry.icon}
-    </svg>
-  ),
-}));
+  {
+    to: '/vault',
+    label: 'Vault',
+    icon: (
+      <path d="M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5l-8-3Zm0 7a2 2 0 0 1 1 3.7V15h-2v-2.3A2 2 0 0 1 12 9Z" />
+    ),
+  },
+  {
+    to: '/nominees',
+    label: 'Estate',
+    icon: <path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-8 8a8 8 0 0 1 16 0v1H4v-1Z" />,
+  },
+].map(withIcon);
+
+/**
+ * The heir's destination.
+ *
+ * Kept out of the main list because it is the *replacement* for the owner-only tabs rather
+ * than an addition to them — a nominee has no estate of their own to administer.
+ */
+const INHERITANCE: Destination = withIcon({
+  to: '/inheritance',
+  label: 'Inheritance',
+  icon: <path d="M12 3 3 8v3h18V8l-9-5Zm-7 10v6H3v2h18v-2h-2v-6h-2v6h-3v-6h-2v6H7v-6H5Z" />,
+});
+
+/** Wrap a path in the one SVG frame every icon shares. */
+function withIcon(entry: { to: string; label: string; icon: ReactNode }): Destination {
+  return {
+    ...entry,
+    icon: (
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true">
+        {entry.icon}
+      </svg>
+    ),
+  };
+}
 
 export function AppShell({ children }: { children: ReactNode }) {
   const { user, logout } = useSession();
@@ -59,6 +88,15 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [theme, setTheme] = useState<Theme>(() => readTheme());
 
   usePrivacyShortcut();
+
+  /*
+   * A nominee account owns nothing and administers nobody, so the destinations that only
+   * make sense for an owner are replaced by the one that does. Routing still permits the
+   * others — the read-only guard and the scoped repository are what enforce anything — but
+   * a tab bar offering "Add nominee" to somebody with no assets is just noise.
+   */
+  const destinations: Destination[] =
+    user?.role === 'nominee' ? [DESTINATIONS[0]!, DESTINATIONS[1]!, INHERITANCE] : DESTINATIONS;
 
   useEffect(() => {
     applyTheme(theme);
@@ -77,7 +115,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </p>
         </div>
 
-        {DESTINATIONS.map((destination) => (
+        {destinations.map((destination) => (
           <NavLink
             key={destination.to}
             to={destination.to}
@@ -144,7 +182,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           }}
           aria-label="Sections"
         >
-          {DESTINATIONS.map((destination) => (
+          {destinations.map((destination) => (
             <NavLink
               key={destination.to}
               to={destination.to}
