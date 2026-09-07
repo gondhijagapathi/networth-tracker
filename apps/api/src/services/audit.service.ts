@@ -39,6 +39,15 @@ export type AuditAction =
   | 'asset.archived'
   | 'transaction.deleted'
   | 'instrument.created'
+  | 'prices.refreshed'
+  // Household grants flow both ways between two independent people, so every step that
+  // changes what one of them shares gets a row — a partner narrowing their own share mode
+  // is the one event neither side can see happen inside the other's account otherwise.
+  | 'household.created'
+  | 'household.invited'
+  | 'household.joined'
+  | 'household.share_updated'
+  | 'household.left'
   // The vault and the estate are where the audit log stops being a nicety. A released
   // escrow hands somebody the keys to a household; "when, and what opened it" has to be
   // answerable months later, by which time nobody remembers.

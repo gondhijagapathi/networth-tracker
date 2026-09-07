@@ -3,8 +3,10 @@ import { createApp } from './app.js';
 import { createContext } from './context.js';
 import { createDb } from './db/client.js';
 import { runMigrations } from './db/migrate.js';
+import { scheduleCron } from './lib/cron.js';
 import { evaluateDeadManSwitches } from './services/deadman.service.js';
 import { ensureBootstrapInvite } from './services/invite.service.js';
+import { refreshPrices } from './services/priceProvider.service.js';
 
 const config = loadConfig();
 const { db, sqlite, close } = createDb(config.DATABASE_PATH);
@@ -68,10 +70,25 @@ const sweepTimer = setInterval(sweep, SWEEP_INTERVAL_MS);
 // Without this a `node dist/index.js` would refuse to exit on its own.
 sweepTimer.unref();
 
+/**
+ * The nightly price refresh.
+ *
+ * Unlike the dead-man sweep this genuinely wants a fixed time, not "often enough" — AMFI
+ * publishes once a day, and `NAV_REFRESH_CRON` (default `30 20 * * 1-5`, weekday evenings) is
+ * what says when. A failed run is logged and dropped the same way a failed sweep is: manual
+ * pricing keeps working regardless, and tomorrow's run gets another try.
+ */
+const priceJob = scheduleCron(config.NAV_REFRESH_CRON, () => {
+  refreshPrices(ctx, { source: 'all' }, null, null).catch((error: unknown) => {
+    console.warn('price refresh failed', error);
+  });
+});
+
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
     // Checkpoint the WAL and close cleanly so the next start does not have to recover.
     clearInterval(sweepTimer);
+    priceJob.stop();
     server.close(() => {
       close();
       process.exit(0);
