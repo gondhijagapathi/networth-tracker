@@ -11,9 +11,16 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { ASSET_TYPES, type AssetQuery, type AssetSummary, type AssetType } from '@networth/shared';
+import {
+  ASSET_TYPES,
+  STALE_PRICE_DAYS,
+  type AssetQuery,
+  type AssetSummary,
+  type AssetType,
+} from '@networth/shared';
 import {
   Amount,
+  Button,
   EmptyState,
   ErrorNotice,
   Input,
@@ -23,7 +30,7 @@ import {
   Skeleton,
 } from '../components/ui.js';
 import { endpoints } from '../lib/endpoints.js';
-import { ASSET_TYPE_PLURALS, ASSET_TYPE_LABELS, formatDate } from '../lib/format.js';
+import { ASSET_TYPE_PLURALS, ASSET_TYPE_LABELS, formatDate, isStalePrice } from '../lib/format.js';
 import { useResource } from '../lib/resource.js';
 
 const SORTS: Array<{ value: string; label: string }> = [
@@ -76,6 +83,28 @@ export function AssetList() {
 
   const list = useResource((signal) => endpoints.assets(query, signal), [query]);
   const counts = useResource((signal) => endpoints.assetCounts(signal), []);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshNote, setRefreshNote] = useState<string | null>(null);
+
+  async function refreshPrices() {
+    setRefreshing(true);
+    setRefreshNote(null);
+    try {
+      const result = await endpoints.refreshPrices();
+      const updated = result.runs.reduce((total, run) => total + run.updated, 0);
+      const failed = result.runs.filter((run) => run.errors.length > 0);
+      setRefreshNote(
+        failed.length > 0
+          ? `Updated ${updated} price${updated === 1 ? '' : 's'}, but ${failed[0]!.provider} could not be reached.`
+          : `Updated ${updated} price${updated === 1 ? '' : 's'}.`,
+      );
+      list.reload();
+    } catch (caught) {
+      setRefreshNote(caught instanceof Error ? caught.message : 'Could not refresh prices.');
+    } finally {
+      setRefreshing(false);
+    }
+  }
 
   function setParam(key: string, value: string) {
     setParams((previous) => {
@@ -101,11 +130,22 @@ export function AssetList() {
         title="Assets"
         subtitle={list.data === null ? undefined : `${list.data.total} of yours`}
         action={
-          <Link to="/assets/new" className="btn btn-primary">
-            Add asset
-          </Link>
+          <div className="flex flex-wrap gap-2">
+            <Button disabled={refreshing} onClick={() => void refreshPrices()}>
+              {refreshing ? 'Refreshing…' : 'Refresh prices'}
+            </Button>
+            <Link to="/assets/new" className="btn btn-primary">
+              Add asset
+            </Link>
+          </div>
         }
       />
+
+      {refreshNote !== null && (
+        <p className="mb-3 text-xs" style={{ color: 'var(--text-secondary)' }}>
+          {refreshNote}
+        </p>
+      )}
 
       <div className="mb-3 flex flex-wrap gap-2">
         <Input
@@ -248,7 +288,19 @@ function AssetRow({ asset }: { asset: AssetSummary }) {
                   compact
                 />
               </p>
-              <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+              <p
+                className="text-[11px]"
+                style={{
+                  color: isStalePrice(asset.latestValue.asOf, asset.latestValue.source)
+                    ? 'var(--color-warn)'
+                    : 'var(--text-muted)',
+                }}
+                title={
+                  isStalePrice(asset.latestValue.asOf, asset.latestValue.source)
+                    ? `No price update in over ${STALE_PRICE_DAYS} days`
+                    : undefined
+                }
+              >
                 {formatDate(asset.latestValue.asOf)}
               </p>
             </>

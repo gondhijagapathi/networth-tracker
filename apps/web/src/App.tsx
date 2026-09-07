@@ -18,6 +18,7 @@ import { AssetForm } from './routes/AssetForm.js';
 import { AssetList } from './routes/AssetList.js';
 import { ClaimKit } from './routes/ClaimKit.js';
 import { Dashboard } from './routes/Dashboard.js';
+import { Household } from './routes/Household.js';
 import { Inheritance } from './routes/Inheritance.js';
 import { Nominees } from './routes/Nominees.js';
 import { Performance } from './routes/Performance.js';
@@ -41,6 +42,7 @@ export function App() {
                 <Route path="/assets/:id" element={<AssetDetail />} />
                 <Route path="/assets/:id/edit" element={<AssetForm mode="edit" />} />
                 <Route path="/performance" element={<Performance />} />
+                <Route path="/household" element={<Household />} />
                 <Route path="/vault" element={<Vault />} />
                 <Route path="/nominees" element={<Nominees />} />
                 <Route path="/inheritance" element={<Inheritance />} />

@@ -45,6 +45,11 @@ const DESTINATIONS: Destination[] = [
     ),
   },
   {
+    to: '/household',
+    label: 'Household',
+    icon: <path d="M12 3 3 8v3h18V8l-9-5ZM5 13v8h4v-5h6v5h4v-8H5Z" />,
+  },
+  {
     to: '/vault',
     label: 'Vault',
     icon: (

@@ -29,16 +29,23 @@ import type {
 import type {
   ClaimKitResponse,
   ConfigureDeadManBody,
+  CreateHouseholdBody,
   CreateNomineeBody,
   CreateVaultItemBody,
   DeadManStatus,
   EstateSummary,
+  HouseholdMemberRecord,
+  HouseholdRecord,
+  InvitePartnerBody,
   NomineeRecord,
+  PriceRefreshResult,
+  PriceRefreshSource,
   PublicKeyJwk,
   RekeyVaultBody,
   SealEscrowBody,
   SetupVaultBody,
   UpdateNomineeBody,
+  UpdateShareModeBody,
   UpdateVaultItemBody,
   VaultDocumentRecord,
   VaultItemRecord,
@@ -108,6 +115,34 @@ export const endpoints = {
 
   createInstrument: (body: CreateInstrumentBody) =>
     api.post<{ instrument: InstrumentRecord }>('/instruments', body),
+
+  refreshPrices: (source: PriceRefreshSource = 'all') =>
+    api.post<PriceRefreshResult>('/instruments/refresh', { source }),
+
+  /* ---------------------------------------------------------------------- */
+  /* Households                                                             */
+  /* ---------------------------------------------------------------------- */
+
+  households: (signal?: AbortSignal) =>
+    api.get<{ households: HouseholdRecord[] }>('/households', signal),
+
+  household: (id: string, signal?: AbortSignal) =>
+    api.get<{ household: HouseholdRecord }>(`/households/${id}`, signal),
+
+  createHousehold: (body: CreateHouseholdBody) =>
+    api.post<{ household: HouseholdRecord }>('/households', body),
+
+  invitePartner: (id: string, body: InvitePartnerBody) =>
+    api.post<{ member: HouseholdMemberRecord }>(`/households/${id}/invite`, body),
+
+  acceptHousehold: (id: string) =>
+    api.post<{ member: HouseholdMemberRecord }>(`/households/${id}/accept`),
+
+  updateShareMode: (id: string, body: UpdateShareModeBody) =>
+    api.patch<{ member: HouseholdMemberRecord }>(`/households/${id}/share`, body),
+
+  leaveHousehold: (id: string, userId: string) =>
+    api.delete<void>(`/households/${id}/members/${userId}`),
 
   /* ---------------------------------------------------------------------- */
   /* Vault                                                                  */
