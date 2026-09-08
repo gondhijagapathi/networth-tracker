@@ -12,6 +12,9 @@
     "db:migrate": "tsx --env-file-if-exists=../../.env src/db/cli.ts migrate",
     "db:status": "tsx --env-file-if-exists=../../.env src/db/cli.ts status",
     "db:seed": "tsx --env-file-if-exists=../../.env src/db/seed.ts",
+    "backup": "tsx --env-file-if-exists=../../.env src/cli/backup.ts create",
+    "backup:list": "tsx --env-file-if-exists=../../.env src/cli/backup.ts list",
+    "restore": "tsx --env-file-if-exists=../../.env src/cli/backup.ts restore",
     "clean": "rm -rf dist *.tsbuildinfo"
   },
   "dependencies": {

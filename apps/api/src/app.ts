@@ -8,10 +8,13 @@ import { errorHandler, notFoundHandler } from './middleware/error.js';
 import { adminRouter } from './routes/admin.js';
 import { analyticsRouter } from './routes/analytics.js';
 import { assetsRouter } from './routes/assets.js';
+import { backupRouter } from './routes/backup.js';
 import { authRouter } from './routes/auth.js';
 import { estateRouter } from './routes/estate.js';
+import { exportRouter } from './routes/export.js';
 import { healthRouter } from './routes/health.js';
 import { householdsRouter } from './routes/households.js';
+import { indiaRouter } from './routes/india.js';
 import { instrumentsRouter } from './routes/instruments.js';
 import { nomineesRouter } from './routes/nominees.js';
 import { vaultRouter } from './routes/vault.js';
@@ -74,6 +77,9 @@ export function createApp(ctx: AppContext): Express {
   app.use('/api/vault', vaultRouter(ctx));
   app.use('/api/nominees', nomineesRouter(ctx));
   app.use('/api/estate', estateRouter(ctx));
+  app.use('/api/india', indiaRouter(ctx));
+  app.use('/api/backup', backupRouter(ctx));
+  app.use('/api/export', exportRouter(ctx));
 
   app.use(notFoundHandler);
   app.use(errorHandler({ exposeStack: config.NODE_ENV === 'development' }));

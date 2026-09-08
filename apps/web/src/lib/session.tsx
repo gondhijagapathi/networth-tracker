@@ -13,6 +13,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import type { ReactNode } from 'react';
 import type { LoginBody, PublicUser, RegisterBody } from '@networth/shared';
 import { ApiError, api } from './api.js';
+import { clearOfflineCache } from './pwa.js';
 
 /**
  * `loading` is a real state, not an implementation detail: rendering the sign-in page for
@@ -89,6 +90,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
     setUser(null);
     setStatus('anonymous');
+    // Tidiness rather than a security control — the shell cache holds no API responses —
+    // but an app somebody has signed out of should not linger on a shared machine.
+    clearOfflineCache();
   }, []);
 
   const value = useMemo<SessionValue>(

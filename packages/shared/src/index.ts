@@ -11,3 +11,7 @@ export * from './vault.js';
 export * from './estate.js';
 export * from './household.js';
 export * from './pricing.js';
+export * from './backup.js';
+export * from './india.js';
+
+export * from './version.js';

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { parseCron } from './lib/cron.js';
 import { parseDuration } from './lib/time.js';
 
 /**
@@ -31,8 +32,23 @@ const schema = z.object({
 
   BOOTSTRAP_INVITE_CODE: z.string().min(8).optional(),
 
+  /** A 5-field cron expression, or empty to disable the nightly backup entirely. */
   BACKUP_CRON: z.string().default('0 2 * * *'),
   BACKUP_RETENTION: z.coerce.number().int().positive().default(14),
+  /**
+   * The passphrase the nightly bundle is sealed with.
+   *
+   * Optional, and the scheduled backup does not run without it — writing an unencrypted
+   * snapshot of every account in the household to disk because nobody set a variable is not
+   * a default this application is willing to have. `BACKUP.md` says so, and `scheduleOf` in
+   * `backup.service.ts` reports the schedule as inactive rather than pretending otherwise.
+   */
+  BACKUP_PASSPHRASE: z.preprocess(
+    // An unset variable and one present but empty mean the same thing to an operator, and
+    // a length rule that rejected `BACKUP_PASSPHRASE=` would be a confusing way to say so.
+    (value) => (value === '' ? undefined : value),
+    z.string().min(12, 'BACKUP_PASSPHRASE must be at least 12 characters').optional(),
+  ),
 
   AMFI_NAV_URL: z.url().default('https://portal.amfiindia.com/spages/NAVAll.txt'),
   NAV_REFRESH_CRON: z.string().default('30 20 * * 1-5'),
@@ -95,6 +111,20 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     refreshTokenTtlSeconds = parseDuration(value.REFRESH_TOKEN_TTL);
   } catch (error) {
     problems.push(`REFRESH_TOKEN_TTL: ${(error as Error).message}`);
+  }
+
+  // Cron expressions are checked here rather than at their first tick: a typo in
+  // `NAV_REFRESH_CRON` should stop the process at boot, not fire a TypeError at 20:30.
+  for (const [key, expression] of Object.entries({
+    NAV_REFRESH_CRON: value.NAV_REFRESH_CRON,
+    BACKUP_CRON: value.BACKUP_CRON,
+  })) {
+    if (expression.trim() === '') continue;
+    try {
+      parseCron(expression);
+    } catch (error) {
+      problems.push(`${key}: ${(error as Error).message}`);
+    }
   }
 
   if (accessTokenTtlSeconds > 0 && refreshTokenTtlSeconds > 0) {

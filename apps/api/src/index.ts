@@ -4,6 +4,7 @@ import { createContext } from './context.js';
 import { createDb } from './db/client.js';
 import { runMigrations } from './db/migrate.js';
 import { scheduleCron } from './lib/cron.js';
+import { createBackup, pruneBackups } from './services/backup.service.js';
 import { evaluateDeadManSwitches } from './services/deadman.service.js';
 import { ensureBootstrapInvite } from './services/invite.service.js';
 import { refreshPrices } from './services/priceProvider.service.js';
@@ -84,11 +85,50 @@ const priceJob = scheduleCron(config.NAV_REFRESH_CRON, () => {
   });
 });
 
+/**
+ * The nightly backup.
+ *
+ * Two things have to be configured for this to run — a schedule and a passphrase — and it
+ * says which one is missing rather than failing silently. An automatic backup that never
+ * happened is the worst possible outcome for this feature, so the absence is logged at boot
+ * where somebody setting the machine up will see it, not buried in a settings screen.
+ *
+ * Retention is applied after a successful run and only to the nightly bundles, so a failed
+ * night never prunes the last good backup to make room for nothing.
+ */
+const backupPassphrase = config.BACKUP_PASSPHRASE;
+const backupJob =
+  config.BACKUP_CRON.trim() === '' || backupPassphrase === undefined
+    ? null
+    : scheduleCron(config.BACKUP_CRON, () => {
+        createBackup(ctx, { passphrase: backupPassphrase, scheduled: true })
+          .then((backup) => {
+            const pruned = pruneBackups(ctx);
+            // eslint-disable-next-line no-console
+            console.log(
+              `backup written: ${backup.filename} (${backup.sizeBytes} bytes)` +
+                (pruned.length > 0 ? `, pruned ${pruned.length} older bundle(s)` : ''),
+            );
+          })
+          .catch((error: unknown) => {
+            console.warn('scheduled backup failed', error);
+          });
+      });
+
+if (backupJob === null) {
+  console.warn(
+    config.BACKUP_CRON.trim() === ''
+      ? 'Scheduled backups are off: BACKUP_CRON is empty.'
+      : 'Scheduled backups are off: BACKUP_PASSPHRASE is not set, and a bundle is never written unencrypted.',
+  );
+}
+
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
     // Checkpoint the WAL and close cleanly so the next start does not have to recover.
     clearInterval(sweepTimer);
     priceJob.stop();
+    backupJob?.stop();
     server.close(() => {
       close();
       process.exit(0);

@@ -68,8 +68,8 @@ export function NetWorthChart({ series }: { series: NetWorthPoint[] }) {
         <AreaChart data={series} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
           <defs>
             <linearGradient id="netWorthFill" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="var(--color-brand-500)" stopOpacity={0.35} />
-              <stop offset="100%" stopColor="var(--color-brand-500)" stopOpacity={0.02} />
+              <stop offset="0%" stopColor="var(--accent)" stopOpacity={0.35} />
+              <stop offset="100%" stopColor="var(--accent)" stopOpacity={0.02} />
             </linearGradient>
           </defs>
 
@@ -100,7 +100,7 @@ export function NetWorthChart({ series }: { series: NetWorthPoint[] }) {
           <Area
             type="monotone"
             dataKey="netPaise"
-            stroke="var(--color-brand-400)"
+            stroke="var(--accent)"
             strokeWidth={2}
             fill="url(#netWorthFill)"
             isAnimationActive={false}
