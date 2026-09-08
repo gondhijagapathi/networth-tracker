@@ -29,16 +29,27 @@ import type {
 import type {
   ClaimKitResponse,
   ConfigureDeadManBody,
+  CreateHouseholdBody,
+  CreateInviteBody,
   CreateNomineeBody,
   CreateVaultItemBody,
   DeadManStatus,
   EstateSummary,
+  HouseholdMemberRecord,
+  HouseholdRecord,
+  InvitePartnerBody,
+  InviteSummary,
   NomineeRecord,
+  PriceRefreshResult,
+  PriceRefreshSource,
   PublicKeyJwk,
+  PublicUser,
   RekeyVaultBody,
   SealEscrowBody,
   SetupVaultBody,
   UpdateNomineeBody,
+  UpdateShareModeBody,
+  UpdateUserBody,
   UpdateVaultItemBody,
   VaultDocumentRecord,
   VaultItemRecord,
@@ -108,6 +119,34 @@ export const endpoints = {
 
   createInstrument: (body: CreateInstrumentBody) =>
     api.post<{ instrument: InstrumentRecord }>('/instruments', body),
+
+  refreshPrices: (source: PriceRefreshSource = 'all') =>
+    api.post<PriceRefreshResult>('/instruments/refresh', { source }),
+
+  /* ---------------------------------------------------------------------- */
+  /* Households                                                             */
+  /* ---------------------------------------------------------------------- */
+
+  households: (signal?: AbortSignal) =>
+    api.get<{ households: HouseholdRecord[] }>('/households', signal),
+
+  household: (id: string, signal?: AbortSignal) =>
+    api.get<{ household: HouseholdRecord }>(`/households/${id}`, signal),
+
+  createHousehold: (body: CreateHouseholdBody) =>
+    api.post<{ household: HouseholdRecord }>('/households', body),
+
+  invitePartner: (id: string, body: InvitePartnerBody) =>
+    api.post<{ member: HouseholdMemberRecord }>(`/households/${id}/invite`, body),
+
+  acceptHousehold: (id: string) =>
+    api.post<{ member: HouseholdMemberRecord }>(`/households/${id}/accept`),
+
+  updateShareMode: (id: string, body: UpdateShareModeBody) =>
+    api.patch<{ member: HouseholdMemberRecord }>(`/households/${id}/share`, body),
+
+  leaveHousehold: (id: string, userId: string) =>
+    api.delete<void>(`/households/${id}/members/${userId}`),
 
   /* ---------------------------------------------------------------------- */
   /* Vault                                                                  */
@@ -205,4 +244,25 @@ export const endpoints = {
 
   claimKit: (params: { ownerId?: string } = {}, signal?: AbortSignal) =>
     api.get<ClaimKitResponse>(`/estate/claim-kit${query(params)}`, signal),
+
+  /* ---------------------------------------------------------------------- */
+  /* Administration                                                         */
+  /* ---------------------------------------------------------------------- */
+
+  adminUsers: (signal?: AbortSignal) => api.get<{ users: PublicUser[] }>('/admin/users', signal),
+
+  updateUser: (id: string, body: UpdateUserBody) =>
+    api.patch<{ user: PublicUser }>(`/admin/users/${id}`, body),
+
+  revokeUserSessions: (id: string) =>
+    api.post<{ revoked: number }>(`/admin/users/${id}/revoke-sessions`),
+
+  adminInvites: (signal?: AbortSignal) =>
+    api.get<{ invites: InviteSummary[] }>('/admin/invites', signal),
+
+  /** The code comes back exactly once; it is stored only as a hash. */
+  createInvite: (body: CreateInviteBody) =>
+    api.post<{ invite: InviteSummary; code: string }>('/admin/invites', body),
+
+  revokeInvite: (id: string) => api.delete<void>(`/admin/invites/${id}`),
 };

@@ -11,6 +11,7 @@ import { assetsRouter } from './routes/assets.js';
 import { authRouter } from './routes/auth.js';
 import { estateRouter } from './routes/estate.js';
 import { healthRouter } from './routes/health.js';
+import { householdsRouter } from './routes/households.js';
 import { instrumentsRouter } from './routes/instruments.js';
 import { nomineesRouter } from './routes/nominees.js';
 import { vaultRouter } from './routes/vault.js';
@@ -69,6 +70,7 @@ export function createApp(ctx: AppContext): Express {
   app.use('/api/assets', assetsRouter(ctx));
   app.use('/api/analytics', analyticsRouter(ctx));
   app.use('/api/instruments', instrumentsRouter(ctx));
+  app.use('/api/households', householdsRouter(ctx));
   app.use('/api/vault', vaultRouter(ctx));
   app.use('/api/nominees', nomineesRouter(ctx));
   app.use('/api/estate', estateRouter(ctx));

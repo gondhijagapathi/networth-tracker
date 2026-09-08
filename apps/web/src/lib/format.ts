@@ -9,6 +9,7 @@
 import {
   ASSET_CLASS_LABELS,
   LIQUIDITY_LABELS,
+  STALE_PRICE_DAYS,
   formatCompactINR,
   formatINR,
   type AssetClass,
@@ -132,6 +133,19 @@ export function formatPercent(ratio: number | null | undefined, fractionDigits =
 export function formatSignedINR(paise: number): string {
   const rendered = formatCompactINR(Math.abs(paise));
   return paise < 0 ? `−${rendered}` : `+${rendered}`;
+}
+
+/**
+ * Whether a `market`-sourced price is old enough to flag.
+ *
+ * A manually entered value is never stale in this sense — it is exactly as fresh as its
+ * owner chose to make it — so this only ever applies to a holding priced by AMFI or a stock
+ * provider, which is the case `STALE_PRICE_DAYS` describes.
+ */
+export function isStalePrice(asOf: string, source: string): boolean {
+  if (source === 'manual') return false;
+  const days = (Date.now() - new Date(`${asOf.slice(0, 10)}T00:00:00Z`).getTime()) / 86_400_000;
+  return days > STALE_PRICE_DAYS;
 }
 
 /** The CSS colour for a gain or a loss. Zero is neither, and should not be green. */
