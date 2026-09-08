@@ -13,6 +13,7 @@ import type { ReactNode } from 'react';
 import { AppShell } from './components/AppShell.js';
 import { Skeleton } from './components/ui.js';
 import { useSession } from './lib/session.js';
+import { Admin } from './routes/Admin.js';
 import { AssetDetail } from './routes/AssetDetail.js';
 import { AssetForm } from './routes/AssetForm.js';
 import { AssetList } from './routes/AssetList.js';
@@ -47,6 +48,14 @@ export function App() {
                 <Route path="/nominees" element={<Nominees />} />
                 <Route path="/inheritance" element={<Inheritance />} />
                 <Route path="/claim-kit" element={<ClaimKit />} />
+                <Route
+                  path="/admin"
+                  element={
+                    <RequireAdmin>
+                      <Admin />
+                    </RequireAdmin>
+                  }
+                />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
             </AppShell>
@@ -69,6 +78,19 @@ function RequireSession({ children }: { children: ReactNode }) {
     );
   }
   if (status === 'anonymous') return <Navigate to="/sign-in" replace />;
+  return <>{children}</>;
+}
+
+/**
+ * The admin screen, for admins.
+ *
+ * The server enforces this too — every `/api/admin` route is behind `requireRole('admin')` —
+ * so this guard is not the protection. It exists so a member who types the URL gets their
+ * dashboard rather than a screen that can only ever answer 403.
+ */
+function RequireAdmin({ children }: { children: ReactNode }) {
+  const { user } = useSession();
+  if (user?.role !== 'admin') return <Navigate to="/" replace />;
   return <>{children}</>;
 }
 

@@ -30,6 +30,7 @@ import type {
   ClaimKitResponse,
   ConfigureDeadManBody,
   CreateHouseholdBody,
+  CreateInviteBody,
   CreateNomineeBody,
   CreateVaultItemBody,
   DeadManStatus,
@@ -37,15 +38,18 @@ import type {
   HouseholdMemberRecord,
   HouseholdRecord,
   InvitePartnerBody,
+  InviteSummary,
   NomineeRecord,
   PriceRefreshResult,
   PriceRefreshSource,
   PublicKeyJwk,
+  PublicUser,
   RekeyVaultBody,
   SealEscrowBody,
   SetupVaultBody,
   UpdateNomineeBody,
   UpdateShareModeBody,
+  UpdateUserBody,
   UpdateVaultItemBody,
   VaultDocumentRecord,
   VaultItemRecord,
@@ -240,4 +244,25 @@ export const endpoints = {
 
   claimKit: (params: { ownerId?: string } = {}, signal?: AbortSignal) =>
     api.get<ClaimKitResponse>(`/estate/claim-kit${query(params)}`, signal),
+
+  /* ---------------------------------------------------------------------- */
+  /* Administration                                                         */
+  /* ---------------------------------------------------------------------- */
+
+  adminUsers: (signal?: AbortSignal) => api.get<{ users: PublicUser[] }>('/admin/users', signal),
+
+  updateUser: (id: string, body: UpdateUserBody) =>
+    api.patch<{ user: PublicUser }>(`/admin/users/${id}`, body),
+
+  revokeUserSessions: (id: string) =>
+    api.post<{ revoked: number }>(`/admin/users/${id}/revoke-sessions`),
+
+  adminInvites: (signal?: AbortSignal) =>
+    api.get<{ invites: InviteSummary[] }>('/admin/invites', signal),
+
+  /** The code comes back exactly once; it is stored only as a hash. */
+  createInvite: (body: CreateInviteBody) =>
+    api.post<{ invite: InviteSummary; code: string }>('/admin/invites', body),
+
+  revokeInvite: (id: string) => api.delete<void>(`/admin/invites/${id}`),
 };

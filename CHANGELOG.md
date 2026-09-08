@@ -99,6 +99,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is the existing write paths — and stays the fallback whenever a provider cannot reach the
   network or has never heard of an instrument. The asset list shows a "Refresh prices" action
   and flags a `market`-sourced price as stale once it is more than five days old.
+- An administration screen at `/admin`, admin-only: issue and withdraw invites (the code is
+  shown once, because only its hash is stored), and see every account with controls to change
+  a role, suspend or reactivate, and sign somebody out of every device. The API behind it has
+  existed since P1 and had no UI. It is reachable from the foot of the sidebar rather than the
+  bottom tab bar — administration is operational chrome, not a section you check — and it
+  shows nobody's assets, because no endpoint under `/api/admin` can read them.
 
 ### Changed
 

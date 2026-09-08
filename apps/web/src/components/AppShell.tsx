@@ -64,6 +64,22 @@ const DESTINATIONS: Destination[] = [
 ].map(withIcon);
 
 /**
+ * Administration.
+ *
+ * Not in `DESTINATIONS`, and not in the tab bar. The bottom tabs are the sections a person
+ * *checks* — six of them already share a phone's width — while administration is occasional
+ * operational chrome, closer to "sign out" than to "assets". So it sits with the controls at
+ * the foot of the sidebar, and beside them in the mobile header.
+ */
+const ADMIN: Destination = withIcon({
+  to: '/admin',
+  label: 'Admin',
+  icon: (
+    <path d="M12 1 3 5v6c0 5.6 3.8 10.7 9 12 5.2-1.3 9-6.4 9-12V5l-9-4Zm0 6a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5Zm0 11.5a5.5 5.5 0 0 1-4.4-2.2c.1-1.5 3-2.3 4.4-2.3s4.3.8 4.4 2.3A5.5 5.5 0 0 1 12 18.5Z" />
+  ),
+});
+
+/**
  * The heir's destination.
  *
  * Kept out of the main list because it is the *replacement* for the owner-only tabs rather
@@ -102,6 +118,7 @@ export function AppShell({ children }: { children: ReactNode }) {
    */
   const destinations: Destination[] =
     user?.role === 'nominee' ? [DESTINATIONS[0]!, DESTINATIONS[1]!, INHERITANCE] : DESTINATIONS;
+  const isAdmin = user?.role === 'admin';
 
   useEffect(() => {
     applyTheme(theme);
@@ -133,6 +150,15 @@ export function AppShell({ children }: { children: ReactNode }) {
         ))}
 
         <div className="mt-auto space-y-1 px-1 pt-4">
+          {isAdmin && (
+            <NavLink
+              to={ADMIN.to}
+              className={({ isActive }) => `nav-item ${isActive ? 'nav-item-active' : ''}`}
+            >
+              {ADMIN.icon}
+              <span>{ADMIN.label}</span>
+            </NavLink>
+          )}
           <Button variant="ghost" className="w-full justify-start" onClick={toggle}>
             {hidden ? 'Show amounts' : 'Hide amounts'}
           </Button>
@@ -157,6 +183,11 @@ export function AppShell({ children }: { children: ReactNode }) {
           <div className="flex items-center justify-between px-4 py-3">
             <span className="text-sm font-semibold tracking-tight">Net Worth</span>
             <div className="flex items-center gap-2">
+              {isAdmin && (
+                <NavLink to={ADMIN.to} className="btn btn-ghost" aria-label="Administration">
+                  {ADMIN.icon}
+                </NavLink>
+              )}
               <Button variant="ghost" onClick={toggle} aria-pressed={hidden}>
                 {hidden ? 'Show' : 'Hide'}
               </Button>
