@@ -154,6 +154,29 @@ export async function upload<T>(path: string, bytes: Uint8Array, meta: unknown):
   return (await response.json()) as T;
 }
 
+/**
+ * POST raw bytes, with the rest of the request in headers.
+ *
+ * The one case is a backup bundle, which can be hundreds of megabytes: base64 inside JSON
+ * would inflate it by a third and force the server to buffer a string that large before it
+ * could look at the first byte.
+ */
+export async function sendBytes<T>(
+  path: string,
+  bytes: ArrayBuffer,
+  headers: Record<string, string> = {},
+): Promise<T> {
+  const response = await fetch(`/api${path}`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'content-type': 'application/octet-stream', ...headers, ...csrfHeader() },
+    body: bytes,
+  });
+
+  if (!response.ok) throw await toApiError(response);
+  return (await response.json()) as T;
+}
+
 /** Fetch a document's ciphertext. The caller decrypts it; this never sees a plaintext. */
 export async function binary(path: string): Promise<ArrayBuffer> {
   const response = await fetch(`/api${path}`, { credentials: 'include' });

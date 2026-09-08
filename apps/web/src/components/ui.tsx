@@ -8,13 +8,16 @@
  * single class on the root element rather than a prop threaded through the tree.
  */
 
+import { cloneElement, useId } from 'react';
 import type {
   ButtonHTMLAttributes,
   InputHTMLAttributes,
+  ReactElement,
   ReactNode,
   SelectHTMLAttributes,
 } from 'react';
 import { formatCompactINR, formatINR } from '@networth/shared';
+import { useDisplay } from '../lib/display.js';
 import { toneOf } from '../lib/format.js';
 
 /* -------------------------------------------------------------------------- */
@@ -73,12 +76,18 @@ export function PageHeader({
 /**
  * An amount.
  *
- * `compact` gives the lakh/crore reading a person actually speaks; the full figure stays in
+ * Compact gives the lakh/crore reading a person actually speaks; the full figure stays in
  * the `title` so it is one hover away and still selectable and searchable in the page.
+ *
+ * The `compact` prop is deliberately optional and *not* defaulted to false. Left unset, the
+ * amount follows the reader's own lakh/crore preference, which is what makes that toggle a
+ * setting rather than a suggestion. A call site passes it explicitly only where the choice
+ * belongs to the screen rather than to the reader — a figure inside a chart tooltip has no
+ * room for eight digits whatever the preference says.
  */
 export function Amount({
   paise,
-  compact = false,
+  compact,
   showPaise = false,
   tone = false,
   className = '',
@@ -90,14 +99,17 @@ export function Amount({
   tone?: boolean;
   className?: string;
 }) {
+  const { compact: preferCompact } = useDisplay();
+  const short = compact ?? preferCompact;
   const full = formatINR(paise, { paise: showPaise });
+
   return (
     <span
       className={`sensitive tabular ${className}`}
       title={full}
       style={tone ? { color: toneOf(paise) } : undefined}
     >
-      {compact ? formatCompactINR(paise) : full}
+      {short ? formatCompactINR(paise) : full}
     </span>
   );
 }
@@ -126,6 +138,20 @@ export function Button({ variant = 'secondary', className = '', ...props }: Butt
   return <button {...props} className={`btn btn-${variant} ${className}`} />;
 }
 
+/**
+ * A labelled control, with its hint and its error.
+ *
+ * The hint and the error are attached with `aria-describedby` rather than left inside the
+ * `<label>`, and the difference is not cosmetic. Nested in the label, they become part of
+ * the control's *accessible name*: a screen reader announces the "Value" field as "Value
+ * Optional — deposits and funds are computed for you., edit text", and two fields whose
+ * hints differ read as two unrelated controls. As a description, the hint is announced
+ * after the name, on request, which is what a description is for.
+ *
+ * The id is injected into the child with `cloneElement`, so a caller writes `<Field
+ * label="Value"><Input …/></Field>` and gets the wiring for free. That constrains `children`
+ * to a single element, which is what every call site passes and what the type now says.
+ */
 export function Field({
   label,
   hint,
@@ -135,26 +161,49 @@ export function Field({
   label: string;
   hint?: string;
   error?: string;
-  children: ReactNode;
+  children: ReactElement<{ id?: string; 'aria-describedby'?: string; 'aria-invalid'?: boolean }>;
 }) {
+  const id = useId();
+  const describedBy =
+    error !== undefined ? `${id}-error` : hint !== undefined ? `${id}-hint` : undefined;
+
   return (
-    <label className="block">
-      <span className="mb-1 block text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>
+    <div className="block">
+      <label
+        htmlFor={id}
+        className="mb-1 block text-xs font-medium"
+        style={{ color: 'var(--text-secondary)' }}
+      >
         {label}
-      </span>
-      {children}
+      </label>
+
+      {cloneElement(children, {
+        id,
+        'aria-describedby': describedBy,
+        ...(error !== undefined ? { 'aria-invalid': true } : {}),
+      })}
+
       {error !== undefined ? (
-        <span className="mt-1 block text-xs" style={{ color: 'var(--color-loss)' }}>
+        <span
+          id={`${id}-error`}
+          role="alert"
+          className="mt-1 block text-xs"
+          style={{ color: 'var(--color-loss)' }}
+        >
           {error}
         </span>
       ) : (
         hint !== undefined && (
-          <span className="mt-1 block text-xs" style={{ color: 'var(--text-muted)' }}>
+          <span
+            id={`${id}-hint`}
+            className="mt-1 block text-xs"
+            style={{ color: 'var(--text-muted)' }}
+          >
             {hint}
           </span>
         )
       )}
-    </label>
+    </div>
   );
 }
 

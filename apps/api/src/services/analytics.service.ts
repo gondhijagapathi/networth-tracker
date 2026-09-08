@@ -514,8 +514,13 @@ function entryFor(
  * FD nobody has recorded a transaction against still had a principal paid in on the day it
  * was opened — and failing that, the first valuation, which is the earliest evidence the
  * asset existed and was worth something.
+ *
+ * Exported for the tax report in P9, which needs the same two numbers this produces — what
+ * was put in, and when the first rupee of it went in. Deriving those a second time would be
+ * two implementations of "what did this cost", free to disagree about an asset's cost basis
+ * between the returns page and the capital-gains estimate.
  */
-function cashflows(facts: AssetFacts, data: PortfolioData, asOf: string): CashFlow[] {
+export function cashflows(facts: AssetFacts, data: PortfolioData, asOf: string): CashFlow[] {
   const recorded = (data.transactions.get(facts.asset.id) ?? [])
     .filter((row) => row.date <= asOf)
     .map((row) => ({

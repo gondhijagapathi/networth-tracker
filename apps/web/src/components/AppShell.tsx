@@ -45,9 +45,11 @@ const DESTINATIONS: Destination[] = [
     ),
   },
   {
-    to: '/household',
-    label: 'Household',
-    icon: <path d="M12 3 3 8v3h18V8l-9-5ZM5 13v8h4v-5h6v5h4v-8H5Z" />,
+    to: '/planner',
+    label: 'Planner',
+    icon: (
+      <path d="M7 2v2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-2V2h-2v2H9V2H7ZM5 9h14v11H5V9Zm2 2v2h2v-2H7Zm4 0v2h2v-2h-2Zm4 0v2h2v-2h-2Zm-8 4v2h2v-2H7Zm4 0v2h2v-2h-2Z" />
+    ),
   },
   {
     to: '/vault',
@@ -71,6 +73,29 @@ const DESTINATIONS: Destination[] = [
  * operational chrome, closer to "sign out" than to "assets". So it sits with the controls at
  * the foot of the sidebar, and beside them in the mobile header.
  */
+/**
+ * Household and Settings.
+ *
+ * Both were candidates for the tab bar and neither earns a place in it. The six tabs are the
+ * sections a person *checks* — six already share a phone's width — while a household is
+ * configured once and settings are visited when something needs changing. So they sit with
+ * the controls at the foot of the sidebar, and beside them in the mobile header, which is
+ * the same call this file already made for administration.
+ */
+const HOUSEHOLD: Destination = withIcon({
+  to: '/household',
+  label: 'Household',
+  icon: <path d="M12 3 3 8v3h18V8l-9-5ZM5 13v8h4v-5h6v5h4v-8H5Z" />,
+});
+
+const SETTINGS: Destination = withIcon({
+  to: '/settings',
+  label: 'Settings',
+  icon: (
+    <path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm9.4 4a7.4 7.4 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7.5 7.5 0 0 0-2-1.2L16.5 3h-4l-.4 2.6c-.7.3-1.4.7-2 1.2l-2.4-1-2 3.4 2 1.6a7.4 7.4 0 0 0 0 2.4l-2 1.6 2 3.4 2.4-1c.6.5 1.3.9 2 1.2l.4 2.6h4l.4-2.6c.7-.3 1.4-.7 2-1.2l2.4 1 2-3.4-2-1.6c.1-.4.1-.8.1-1.2Z" />
+  ),
+});
+
 const ADMIN: Destination = withIcon({
   to: '/admin',
   label: 'Admin',
@@ -118,7 +143,15 @@ export function AppShell({ children }: { children: ReactNode }) {
    */
   const destinations: Destination[] =
     user?.role === 'nominee' ? [DESTINATIONS[0]!, DESTINATIONS[1]!, INHERITANCE] : DESTINATIONS;
-  const isAdmin = user?.role === 'admin';
+
+  // A nominee has no household to merge and nothing to administer, but they still choose how
+  // numbers read on their own screen.
+  const secondary: Destination[] =
+    user?.role === 'nominee'
+      ? [SETTINGS]
+      : user?.role === 'admin'
+        ? [HOUSEHOLD, ADMIN, SETTINGS]
+        : [HOUSEHOLD, SETTINGS];
 
   useEffect(() => {
     applyTheme(theme);
@@ -126,6 +159,15 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="min-h-dvh lg:flex">
+      {/*
+       * The skip link. Visually hidden until it has focus, which is the first thing Tab
+       * reaches on every page — without it, a keyboard user tabs through six navigation
+       * items before arriving at the content, on every navigation.
+       */}
+      <a href="#main" className="skip-link">
+        Skip to content
+      </a>
+
       <aside
         className="hidden lg:flex lg:w-56 lg:shrink-0 lg:flex-col lg:gap-1 lg:border-r lg:px-3 lg:py-5"
         style={{ background: 'var(--surface-sunken)' }}
@@ -137,28 +179,33 @@ export function AppShell({ children }: { children: ReactNode }) {
           </p>
         </div>
 
-        {destinations.map((destination) => (
-          <NavLink
-            key={destination.to}
-            to={destination.to}
-            end={destination.to === '/'}
-            className={({ isActive }) => `nav-item ${isActive ? 'nav-item-active' : ''}`}
-          >
-            {destination.icon}
-            <span>{destination.label}</span>
-          </NavLink>
-        ))}
-
-        <div className="mt-auto space-y-1 px-1 pt-4">
-          {isAdmin && (
+        <nav className="contents" aria-label="Sections">
+          {destinations.map((destination) => (
             <NavLink
-              to={ADMIN.to}
+              key={destination.to}
+              to={destination.to}
+              end={destination.to === '/'}
               className={({ isActive }) => `nav-item ${isActive ? 'nav-item-active' : ''}`}
             >
-              {ADMIN.icon}
-              <span>{ADMIN.label}</span>
+              {destination.icon}
+              <span>{destination.label}</span>
             </NavLink>
-          )}
+          ))}
+        </nav>
+
+        <div className="mt-auto space-y-1 px-1 pt-4">
+          <nav className="contents" aria-label="Account and settings">
+            {secondary.map((destination) => (
+              <NavLink
+                key={destination.to}
+                to={destination.to}
+                className={({ isActive }) => `nav-item ${isActive ? 'nav-item-active' : ''}`}
+              >
+                {destination.icon}
+                <span>{destination.label}</span>
+              </NavLink>
+            ))}
+          </nav>
           <Button variant="ghost" className="w-full justify-start" onClick={toggle}>
             {hidden ? 'Show amounts' : 'Hide amounts'}
           </Button>
@@ -182,21 +229,19 @@ export function AppShell({ children }: { children: ReactNode }) {
         >
           <div className="flex items-center justify-between px-4 py-3">
             <span className="text-sm font-semibold tracking-tight">Net Worth</span>
-            <div className="flex items-center gap-2">
-              {isAdmin && (
-                <NavLink to={ADMIN.to} className="btn btn-ghost" aria-label="Administration">
-                  {ADMIN.icon}
+            <div className="flex items-center gap-1">
+              {secondary.map((destination) => (
+                <NavLink
+                  key={destination.to}
+                  to={destination.to}
+                  className="btn btn-ghost"
+                  aria-label={destination.label}
+                >
+                  {destination.icon}
                 </NavLink>
-              )}
+              ))}
               <Button variant="ghost" onClick={toggle} aria-pressed={hidden}>
                 {hidden ? 'Show' : 'Hide'}
-              </Button>
-              <Button
-                variant="ghost"
-                onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-                aria-label="Switch theme"
-              >
-                {theme === 'dark' ? 'Light' : 'Dark'}
               </Button>
               <Button variant="ghost" onClick={() => void logout()}>
                 Sign out
@@ -205,8 +250,18 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
         </header>
 
-        {/* The bottom padding clears the tab bar; `lg` drops it along with the bar. */}
-        <main className="mx-auto w-full max-w-5xl flex-1 px-4 pt-5 pb-28 lg:px-8 lg:pb-10">
+        {/*
+         * `tabIndex={-1}` so the skip link can move focus here. Without it the browser
+         * scrolls to the anchor and leaves focus on the link, and the next Tab goes back to
+         * the navigation the user just asked to skip.
+         *
+         * The bottom padding clears the tab bar; `lg` drops it along with the bar.
+         */}
+        <main
+          id="main"
+          tabIndex={-1}
+          className="mx-auto w-full max-w-5xl flex-1 px-4 pt-5 pb-28 outline-none lg:px-8 lg:pb-10"
+        >
           {children}
         </main>
 

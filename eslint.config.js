@@ -27,5 +27,32 @@ export default tseslint.config(
       ],
     },
   },
+  /*
+   * The two files in this repository that are not TypeScript.
+   *
+   * `typescript-eslint` turns `no-undef` off for TS because the compiler already answers
+   * that question better than a linter can; plain JavaScript gets it back, and then needs to
+   * be told which globals its runtime actually has. A service worker runs in neither the
+   * window nor Node, so it is listed on its own rather than lumped in with the browser.
+   */
+  {
+    files: ['apps/web/public/sw.js'],
+    languageOptions: {
+      globals: {
+        self: 'readonly',
+        caches: 'readonly',
+        fetch: 'readonly',
+        Request: 'readonly',
+        Response: 'readonly',
+        URL: 'readonly',
+      },
+    },
+  },
+  {
+    files: ['**/*.mjs'],
+    languageOptions: {
+      globals: { Buffer: 'readonly', process: 'readonly' },
+    },
+  },
   prettier,
 );

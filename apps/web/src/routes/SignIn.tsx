@@ -17,8 +17,20 @@ type Mode = 'sign-in' | 'register';
 
 export function SignIn() {
   const { status, bootstrapRequired, login, register } = useSession();
-  // A fresh instance has nobody to sign in as, so it opens on the form that can help.
-  const [mode, setMode] = useState<Mode>(bootstrapRequired ? 'register' : 'sign-in');
+  /**
+   * Which form to show, and why it is derived rather than initialised.
+   *
+   * A fresh instance has nobody to sign in as, so it must open on registration — but
+   * `bootstrapRequired` is the answer to an asynchronous request, and on the first render it
+   * is still `false`. Seeding `useState` from it therefore froze the page on the sign-in
+   * form for the one visitor who cannot possibly use it, under a paragraph telling them to
+   * enter the bootstrap invite code, with no field to enter it into.
+   *
+   * So `chosen` holds only what the person explicitly picked, and the default follows the
+   * server's answer whenever they have not picked anything.
+   */
+  const [chosen, setChosen] = useState<Mode | null>(null);
+  const mode: Mode = chosen ?? (bootstrapRequired ? 'register' : 'sign-in');
   const [error, setError] = useState<ApiError | null>(null);
   const [busy, setBusy] = useState(false);
   /** The server answers `totp_required` rather than failing, so the field appears on demand. */
@@ -126,7 +138,7 @@ export function SignIn() {
         className="mt-4 self-center text-sm underline underline-offset-4"
         style={{ color: 'var(--text-secondary)' }}
         onClick={() => {
-          setMode(registering ? 'sign-in' : 'register');
+          setChosen(registering ? 'sign-in' : 'register');
           setError(null);
           setTotpRequired(false);
         }}

@@ -27,6 +27,10 @@ import type {
   ValuationRecord,
 } from '@networth/shared';
 import type {
+  BackupListResponse,
+  BackupRecord,
+  CalendarQuery,
+  CalendarResponse,
   ClaimKitResponse,
   ConfigureDeadManBody,
   CreateHouseholdBody,
@@ -50,13 +54,18 @@ import type {
   UpdateNomineeBody,
   UpdateShareModeBody,
   UpdateUserBody,
+  ExportDataset,
+  FinancialYearQuery,
+  FinancialYearReport,
+  NominationReport,
+  RestoreResult,
   UpdateVaultItemBody,
   VaultDocumentRecord,
   VaultItemRecord,
   VaultKeyMaterial,
   VaultStatus,
 } from '@networth/shared';
-import { api, binary, query, upload } from './api.js';
+import { api, binary, query, sendBytes, upload } from './api.js';
 
 export const endpoints = {
   dashboard: (params: { months?: number; by?: string; asOf?: string }, signal?: AbortSignal) =>
@@ -265,4 +274,53 @@ export const endpoints = {
     api.post<{ invite: InviteSummary; code: string }>('/admin/invites', body),
 
   revokeInvite: (id: string) => api.delete<void>(`/admin/invites/${id}`),
+
+  /* ---------------------------------------------------------------------- */
+  /* India                                                                  */
+  /* ---------------------------------------------------------------------- */
+
+  nomination: (signal?: AbortSignal) => api.get<NominationReport>('/india/nomination', signal),
+
+  calendar: (params: Partial<CalendarQuery> = {}, signal?: AbortSignal) =>
+    api.get<CalendarResponse>(`/india/calendar${query(params)}`, signal),
+
+  financialYear: (params: Partial<FinancialYearQuery> = {}, signal?: AbortSignal) =>
+    api.get<FinancialYearReport>(`/india/financial-year${query(params)}`, signal),
+
+  /* ---------------------------------------------------------------------- */
+  /* Backup and export                                                      */
+  /* ---------------------------------------------------------------------- */
+
+  backups: (signal?: AbortSignal) => api.get<BackupListResponse>('/backup', signal),
+
+  createBackup: (passphrase: string) =>
+    api.post<{ backup: BackupRecord }>('/backup', { passphrase }),
+
+  deleteBackup: (filename: string) => api.delete<void>(`/backup/${filename}`),
+
+  /**
+   * A plain URL rather than a fetch.
+   *
+   * The response carries `Content-Disposition: attachment`, so an ordinary link hands the
+   * bytes to the browser's own download machinery — with a progress indicator, a resumable
+   * transfer and no copy of a hundred-megabyte bundle held in a JavaScript heap. Cookies go
+   * with a same-origin navigation, so it is authenticated exactly like every other call.
+   */
+  backupDownloadUrl: (filename: string) => `/api/backup/${encodeURIComponent(filename)}`,
+
+  /**
+   * Restoring uploads the bundle's bytes.
+   *
+   * The passphrase rides in a header rather than the body because the body is the file, and
+   * the confirmation is a query parameter for the same reason — see `routes/backup.ts`.
+   */
+  restoreBackup: (bundle: ArrayBuffer, passphrase: string) =>
+    sendBytes<RestoreResult>('/backup/restore?confirm=true', bundle, {
+      'x-backup-passphrase': passphrase,
+    }),
+
+  /** Both exports are plain downloads; the browser saves them by `Content-Disposition`. */
+  exportJsonUrl: () => '/api/export/json',
+
+  exportCsvUrl: (dataset: ExportDataset) => `/api/export/csv${query({ dataset })}`,
 };

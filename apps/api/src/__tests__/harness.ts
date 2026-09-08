@@ -150,6 +150,31 @@ export class TestClient {
     return this.send('delete', path, undefined, options);
   }
 
+  /**
+   * A request whose body is bytes rather than JSON — a document upload, a backup bundle.
+   *
+   * Kept on the client rather than spelled out at each call site so that a binary request
+   * still carries the cookies and the CSRF header a browser would send. Getting that wrong
+   * in a test is how an endpoint ends up looking protected when it is not.
+   */
+  async postBytes(
+    path: string,
+    bytes: Buffer,
+    headers: Record<string, string> = {},
+    options: RequestOptions = {},
+  ): Promise<supertest.Response> {
+    return this.send('post', path, bytes, {
+      ...options,
+      headers: { 'content-type': 'application/octet-stream', ...headers },
+      binary: true,
+    });
+  }
+
+  /** A response whose body is bytes: `response.body` comes back as a Buffer. */
+  async getBytes(path: string): Promise<supertest.Response> {
+    return this.send('get', path, undefined, { binary: true });
+  }
+
   private async send(
     method: 'get' | 'post' | 'patch' | 'put' | 'delete',
     path: string,
@@ -166,6 +191,13 @@ export class TestClient {
       request = request.set('x-csrf-token', csrf);
     }
     if (options.ip) request = request.set('X-Forwarded-For', options.ip);
+
+    for (const [name, value] of Object.entries(options.headers ?? {})) {
+      request = request.set(name, value);
+    }
+    // Superagent parses JSON and text by itself; anything else it drops unless told to
+    // buffer, which is how a downloaded bundle arrives as bytes rather than as `{}`.
+    if (options.binary === true) request = request.buffer(true);
 
     const response = body === undefined ? await request : await request.send(body as object);
 
@@ -197,6 +229,10 @@ export interface RequestOptions {
   omitCsrf?: boolean;
   /** Spoof a client address, for per-address rate-limit tests. */
   ip?: string;
+  /** Extra headers — a content type, an upload's metadata, a bundle's passphrase. */
+  headers?: Record<string, string>;
+  /** Send and receive bytes rather than letting superagent parse the body. */
+  binary?: boolean;
 }
 
 /* -------------------------------------------------------------------------- */

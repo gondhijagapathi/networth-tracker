@@ -23,6 +23,8 @@ import { Household } from './routes/Household.js';
 import { Inheritance } from './routes/Inheritance.js';
 import { Nominees } from './routes/Nominees.js';
 import { Performance } from './routes/Performance.js';
+import { Planner } from './routes/Planner.js';
+import { Settings } from './routes/Settings.js';
 import { Vault } from './routes/Vault.js';
 import { SignIn } from './routes/SignIn.js';
 
@@ -43,6 +45,8 @@ export function App() {
                 <Route path="/assets/:id" element={<AssetDetail />} />
                 <Route path="/assets/:id/edit" element={<AssetForm mode="edit" />} />
                 <Route path="/performance" element={<Performance />} />
+                <Route path="/planner" element={<Planner />} />
+                <Route path="/settings" element={<Settings />} />
                 <Route path="/household" element={<Household />} />
                 <Route path="/vault" element={<Vault />} />
                 <Route path="/nominees" element={<Nominees />} />

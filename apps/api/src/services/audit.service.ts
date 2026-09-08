@@ -76,7 +76,14 @@ export type AuditAction =
   | 'deadman.grace_started'
   | 'deadman.cancelled'
   | 'deadman.fired'
-  | 'claimkit.generated';
+  | 'claimkit.generated'
+  // A backup is a copy of the entire installation and an export is a copy of one person's
+  // finances, both leaving the machine in a form nothing here can take back. Who made one,
+  // and when, is the least an audit log owes the household.
+  | 'backup.created'
+  | 'backup.deleted'
+  | 'backup.restored'
+  | 'export.generated';
 
 export interface AuditEntry {
   actorUserId?: string | null;
