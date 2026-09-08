@@ -75,6 +75,17 @@ function RequireSession({ children }: { children: ReactNode }) {
 /** A route change on a phone should start at the top, not halfway down the last list. */
 function ScrollToTop() {
   const { pathname } = useLocation();
-  useEffect(() => window.scrollTo(0, 0), [pathname]);
+
+  /*
+   * The braces are load-bearing. Recent Chrome returns a Promise from `window.scrollTo()`
+   * — it resolves when the scroll finishes — so a concise arrow body would hand that
+   * Promise to React as the effect's clean-up function. Under StrictMode the clean-up runs
+   * immediately, React calls the Promise, and the resulting TypeError takes the whole tree
+   * down: a blank page on every signed-in route, because this component only mounts there.
+   */
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [pathname]);
+
   return null;
 }
