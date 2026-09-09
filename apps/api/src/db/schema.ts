@@ -296,8 +296,6 @@ export const nominees = sqliteTable(
     email: text('email'),
     name: text('name').notNull(),
     relation: text('relation'),
-    /** Intended share, in basis points. Nothing enforces that an owner's shares total 100%. */
-    sharePercentBps: integer('share_percent_bps').notNull().default(0),
     accessLevel: text('access_level', { enum: ['summary', 'full', 'vault'] })
       .notNull()
       .default('summary'),

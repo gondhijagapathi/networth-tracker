@@ -39,7 +39,7 @@ SQLite, WAL mode, foreign keys on. Drizzle ORM defines the schema in
 | `settings` | per-user KV: theme, lakh/crore display, privacy blur, partner-merge toggle |
 | `households` | id, name, created_by |
 | `household_members` | household, user, role (`owner`/`partner`/`member`), `share_mode` (`full`/`summary`/`none`), consent + accepted timestamps |
-| `nominees` | owner → nominee user (null until they accept), email, name, relation, `share_percent_bps`, `access_level` (`summary`/`full`/`vault`), status (`invited`/`accepted`/`revoked`) |
+| `nominees` | owner → nominee user (null until they accept), email, name, relation, `access_level` (`summary`/`full`/`vault`), status (`invited`/`accepted`/`revoked`) |
 | `access_grants` | the one table every scoped query consults: owner, grantee, `scope` (`summary`/`full`/`vault`), `source` (`household`/`nominee`/`manual`) and the row that created it, granted_at, expires_at, revoked_at. Read-only in every case — no scope confers a write |
 | `audit_log` | actor, action, entity type + id, at, ip, meta JSON |
 | `deadman_checkins` | HMAC'd token, the stage whose email carried it, expiry, `used_at`. A single-use "I am still here" link that resets the dead-man clock and grants nothing else. Following the link does not spend it — a human pressing a button does, because mail scanners prefetch links and a scanner answering for a dead owner would keep the switch alive for ever |

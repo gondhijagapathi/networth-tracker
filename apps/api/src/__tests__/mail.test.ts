@@ -243,7 +243,6 @@ describe('invitations', () => {
       name: 'Asha Rao',
       email: 'asha@example.com',
       relation: 'daughter',
-      sharePercentBps: 10_000,
       accessLevel: 'summary',
     });
     const nominees = await admin.get('/api/nominees');

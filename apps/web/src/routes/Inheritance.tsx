@@ -130,7 +130,6 @@ function EstateCard({ estate }: { estate: EstateSummary }) {
 
       <div className="flex flex-wrap items-center gap-2">
         <Pill>{estate.relation ?? 'Nominee'}</Pill>
-        <Pill>{(estate.sharePercentBps / 100).toFixed(0)}% share</Pill>
         <Pill tone={released ? 'var(--color-warn)' : undefined}>
           {estate.escrowState === null
             ? 'No vault key held for you'
