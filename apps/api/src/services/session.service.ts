@@ -11,7 +11,7 @@
  * family, which signs that device chain out and forces a fresh password login.
  */
 
-import { and, desc, eq, isNull } from 'drizzle-orm';
+import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import { uuidv7, type SessionSummary } from '@networth/shared';
 import type { AppContext } from '../context.js';
 import { refreshTokens, users, type UserRow } from '../db/schema.js';
@@ -41,6 +41,10 @@ export async function issueSession(
   options: { deviceLabel?: string | undefined; familyId?: string } = {},
 ): Promise<IssuedSession> {
   const now = ctx.now();
+  // Read rather than remembered: a password change immediately before this bumped the
+  // epoch, and the token being minted now must carry the new one or it would be rejected
+  // by the very next request it makes.
+  const epoch = currentEpoch(ctx, user.id);
   const familyId = options.familyId ?? uuidv7(now.getTime());
   const tokenId = uuidv7(now.getTime());
   const refreshToken = mintRefreshToken();
@@ -60,7 +64,7 @@ export async function issueSession(
     .run();
 
   const accessToken = await signAccessToken(
-    { sub: user.id, role: user.role, sid: familyId },
+    { sub: user.id, role: user.role, sid: familyId, ep: epoch },
     ctx.config.JWT_ACCESS_SECRET,
     ctx.config.accessTokenTtlSeconds,
     now,
@@ -152,7 +156,7 @@ export async function rotateSession(
   });
 
   const accessToken = await signAccessToken(
-    { sub: user.id, role: user.role, sid: existing.familyId },
+    { sub: user.id, role: user.role, sid: existing.familyId, ep: currentEpoch(ctx, user.id) },
     ctx.config.JWT_ACCESS_SECRET,
     ctx.config.accessTokenTtlSeconds,
     now,
@@ -178,12 +182,34 @@ export function revokeFamily(ctx: AppContext, familyId: string, _reason: string)
 }
 
 /** Sign a user out of every device. Used on password change and on suspension. */
+/** The account's current session epoch. Zero for a row that has never been revoked. */
+function currentEpoch(ctx: AppContext, userId: string): number {
+  return (
+    ctx.db.select({ epoch: users.sessionEpoch }).from(users).where(eq(users.id, userId)).get()
+      ?.epoch ?? 0
+  );
+}
+
 export function revokeAllSessions(ctx: AppContext, userId: string): number {
+  const now = isoNow(ctx.now());
+
   const result = ctx.db
     .update(refreshTokens)
-    .set({ revokedAt: isoNow(ctx.now()) })
+    .set({ revokedAt: now })
     .where(and(eq(refreshTokens.userId, userId), isNull(refreshTokens.revokedAt)))
     .run();
+
+  // The refresh rows above stop this account getting a *new* access token. Bumping the
+  // epoch is what stops the one it already holds: every issued token names the epoch it was
+  // minted under, and `requireAuth` rejects any that no longer matches. Done
+  // unconditionally — an account with no live refresh rows may still have a valid access
+  // token in somebody's hands, and that is precisely the case this is for.
+  ctx.db
+    .update(users)
+    .set({ sessionEpoch: sql`${users.sessionEpoch} + 1` })
+    .where(eq(users.id, userId))
+    .run();
+
   return result.changes;
 }
 

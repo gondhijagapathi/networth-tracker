@@ -11,8 +11,11 @@ import {
   changePasswordSchema,
   disableTotpSchema,
   enrolTotpSchema,
+  forgotPasswordSchema,
   loginSchema,
   registerSchema,
+  resetPasswordSchema,
+  resetTokenSchema,
 } from '@networth/shared';
 import type { AppContext } from '../context.js';
 import { REFRESH_COOKIE, clearSessionCookies, setSessionCookies } from '../lib/cookies.js';
@@ -31,6 +34,7 @@ import {
 } from '../services/auth.service.js';
 import { recordAudit } from '../services/audit.service.js';
 import { ensureBootstrapInvite } from '../services/invite.service.js';
+import { checkResetToken, completeReset, requestReset } from '../services/passwordReset.service.js';
 import {
   listSessions,
   revokeFamily,
@@ -158,6 +162,59 @@ export function authRouter(ctx: AppContext): Router {
     const body = changePasswordSchema.parse(req.body);
     await changePassword(ctx, auth.userId, body, clientIp(req));
     // Every session including this one is gone; the client must sign in again.
+    clearSessionCookies(res, { secure: ctx.config.COOKIE_SECURE });
+    res.status(204).end();
+  });
+
+  /* ---------------------------------------------------------------------- */
+  /* Password reset                                                         */
+  /* ---------------------------------------------------------------------- */
+
+  /**
+   * Ask for a reset link.
+   *
+   * Always 204, always the same, however the request went — account or no account, mail
+   * configured or not. The service does the work and reports nothing back, which is the
+   * point: any variation in this response is an account-enumeration oracle, and this
+   * application takes some trouble elsewhere not to have one.
+   *
+   * The only thing that can produce a different status is the rate limiter, and that keys
+   * on the caller's address as well as the address they typed, so it says nothing about
+   * whether the account exists either.
+   */
+  router.post('/forgot-password', (req, res) => {
+    const body = forgotPasswordSchema.parse(req.body);
+    requestReset(ctx, body.email, clientIp(req));
+    res.status(204).end();
+  });
+
+  /**
+   * Is this link still good, and will it want a second factor?
+   *
+   * Called by the reset page before it draws a form, so somebody who followed a stale link
+   * is told so before choosing a password rather than after typing one twice.
+   */
+  router.get('/reset-password', (req, res) => {
+    const token = resetTokenSchema.safeParse(req.query.token);
+    if (!token.success) {
+      res.json({ valid: false, totpRequired: false });
+      return;
+    }
+    res.json(checkResetToken(ctx, token.data));
+  });
+
+  /**
+   * Set the new password.
+   *
+   * Deliberately does not sign the caller in. Somebody who has just proved control of a
+   * mailbox has not yet proved they know the password they chose, and the sign-in form is
+   * one field away — whereas a reset that ends in a live session is a reset that hands an
+   * attacker with mailbox access an account without ever asking for the second factor
+   * again. Cookies are cleared for the same reason.
+   */
+  router.post('/reset-password', async (req, res) => {
+    const body = resetPasswordSchema.parse(req.body);
+    await completeReset(ctx, body, clientIp(req));
     clearSessionCookies(res, { secure: ctx.config.COOKIE_SECURE });
     res.status(204).end();
   });

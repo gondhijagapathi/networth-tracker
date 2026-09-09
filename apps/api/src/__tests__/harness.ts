@@ -26,7 +26,9 @@ import { loadConfig, type Config } from '../config.js';
 import { createContext, type AppContext } from '../context.js';
 import { createDb } from '../db/client.js';
 import { runMigrations } from '../db/migrate.js';
+import { MemoryMailer } from '../lib/mailer.js';
 import { ensureBootstrapInvite } from '../services/invite.service.js';
+import { deliverDueEmails } from '../services/mail.service.js';
 
 export const BOOTSTRAP_CODE = 'BOOTSTRAP-TEST-CODE-0001';
 /**
@@ -37,8 +39,19 @@ export const BOOTSTRAP_CODE = 'BOOTSTRAP-TEST-CODE-0001';
  */
 export const TEST_PASSPHRASE = 'correct-horse-battery-staple';
 
+/**
+ * Mail is *on* by default in tests, through an in-memory transport.
+ *
+ * The alternative — leaving SMTP unset, as a fresh install has it — would mean every test
+ * exercised the suppressed path and none exercised the one that actually sends. Since a
+ * queued message is delivered by a promise `queueEmail` does not wait on, tests that assert
+ * on delivery call `flushMail()` rather than sleeping.
+ */
 const BASE_ENV: NodeJS.ProcessEnv = {
   NODE_ENV: 'test',
+  SMTP_HOST: 'smtp.test.invalid',
+  SMTP_FROM: 'Net Worth <networth@test.invalid>',
+  APP_BASE_URL: 'https://networth.test',
   JWT_ACCESS_SECRET: 'test-access-secret-at-least-32-characters-long',
   JWT_REFRESH_SECRET: 'test-refresh-secret-at-least-32-characters-long',
   SECRET_ENCRYPTION_KEY: 'test-encryption-key-at-least-32-characters-long',
@@ -53,6 +66,16 @@ export interface TestInstance {
   ctx: AppContext;
   config: Config;
   sqlite: Database.Database;
+  /** Every message this instance has delivered, and the switch to make sending fail. */
+  mailer: MemoryMailer;
+  /**
+   * Run the outbox to completion and return what has been delivered.
+   *
+   * `queueEmail` kicks a delivery pass without awaiting it, so a test that checks an inbox
+   * immediately after a request is racing that promise. This drains the queue on purpose
+   * and then reads it, which is deterministic.
+   */
+  flushMail: () => Promise<MemoryMailer['sent']>;
   /** Move the injected clock forward. Everything time-dependent reads it. */
   advance: (seconds: number) => void;
   close: () => void;
@@ -64,7 +87,14 @@ export function createTestInstance(envOverrides: NodeJS.ProcessEnv = {}): TestIn
   runMigrations(sqlite);
 
   let clock = Date.now();
-  const ctx = createContext(config, db, sqlite, { now: () => new Date(clock) });
+  const mailer = new MemoryMailer();
+  // Overriding the transport only when the configuration has one. A test that sets
+  // `SMTP_HOST: ''` is asking to be a fresh install with mail off, and handing it a working
+  // mailer anyway would make the suppressed path untestable.
+  const ctx = createContext(config, db, sqlite, {
+    now: () => new Date(clock),
+    ...(config.mail === null ? {} : { mailer }),
+  });
 
   ensureBootstrapInvite(ctx);
 
@@ -73,6 +103,11 @@ export function createTestInstance(envOverrides: NodeJS.ProcessEnv = {}): TestIn
     ctx,
     config,
     sqlite,
+    mailer,
+    flushMail: async () => {
+      await deliverDueEmails(ctx);
+      return mailer.sent;
+    },
     advance: (seconds) => {
       clock += seconds * 1000;
     },

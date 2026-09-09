@@ -22,7 +22,12 @@ const IV_BYTES = 12;
 const KEY_BYTES = 32;
 const HKDF_SALT = 'networth/secretbox/v1';
 
-export type SecretPurpose = 'totp';
+/**
+ * `totp`  the shared secret behind a second factor.
+ * `email` a rendered outbound message, which while queued holds whatever the message says —
+ *         a live reset link, an unredeemed invite code.
+ */
+export type SecretPurpose = 'totp' | 'email';
 
 function deriveKey(masterKey: string, purpose: SecretPurpose): Buffer {
   return Buffer.from(hkdfSync('sha256', masterKey, HKDF_SALT, purpose, KEY_BYTES));

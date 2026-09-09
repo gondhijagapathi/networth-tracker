@@ -29,6 +29,12 @@ export interface AccessTokenClaims {
   role: Role;
   /** Refresh-token family: lets us invalidate a device chain, not just one token. */
   sid: string;
+  /**
+   * The account's session epoch when this was minted. A wholesale revocation bumps the
+   * counter on the user row, and every token carrying the old value stops verifying —
+   * which is how a stateless token becomes revocable without a lookup per request.
+   */
+  ep: number;
 }
 
 export function accessSecretKey(secret: string): Uint8Array {
@@ -46,7 +52,7 @@ export async function signAccessToken(
   now: Date = new Date(),
 ): Promise<string> {
   const issuedAt = Math.floor(now.getTime() / 1000);
-  return new SignJWT({ role: claims.role, sid: claims.sid })
+  return new SignJWT({ role: claims.role, sid: claims.sid, ep: claims.ep })
     .setProtectedHeader({ alg: 'HS256', typ: 'JWT' })
     .setSubject(claims.sub)
     .setIssuer(ISSUER)
@@ -79,12 +85,20 @@ export async function verifyAccessToken(
     throw unauthenticated('Your session has expired');
   }
 
-  const { sub, role, sid } = payload as JWTPayload & { role?: unknown; sid?: unknown };
+  const { sub, role, sid, ep } = payload as JWTPayload & {
+    role?: unknown;
+    sid?: unknown;
+    ep?: unknown;
+  };
   if (typeof sub !== 'string' || typeof role !== 'string' || typeof sid !== 'string') {
     throw unauthenticated('Your session has expired');
   }
+  // A token minted before this claim existed cannot be checked against an epoch, so it is
+  // not honoured. The only such tokens are ones issued by a build older than this one, and
+  // they expire within fifteen minutes of the upgrade.
+  if (typeof ep !== 'number') throw unauthenticated('Your session has expired');
 
-  return { sub, role: role as Role, sid };
+  return { sub, role: role as Role, sid, ep };
 }
 
 /** A fresh opaque refresh token. 256 bits of entropy; never stored in this form. */

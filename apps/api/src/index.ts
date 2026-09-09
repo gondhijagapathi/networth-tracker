@@ -7,6 +7,7 @@ import { scheduleCron } from './lib/cron.js';
 import { createBackup, pruneBackups } from './services/backup.service.js';
 import { evaluateDeadManSwitches } from './services/deadman.service.js';
 import { ensureBootstrapInvite } from './services/invite.service.js';
+import { deliverDueEmails, pruneSentEmails } from './services/mail.service.js';
 import { refreshPrices } from './services/priceProvider.service.js';
 
 const config = loadConfig();
@@ -72,6 +73,67 @@ const sweepTimer = setInterval(sweep, SWEEP_INTERVAL_MS);
 sweepTimer.unref();
 
 /**
+ * The outbox drain.
+ *
+ * Most messages do not wait for this — `queueEmail` nudges a delivery pass as soon as it
+ * writes a row, because somebody staring at their inbox for a reset link should not have to
+ * wait for a timer. What this loop is actually for is everything that pass could not do:
+ * a message queued while the mail server was down, one queued by the dead-man sweep with
+ * nobody around to nudge anything, and the retries of both.
+ *
+ * A minute, because the backoff schedule's first step is a minute and a poll that runs more
+ * often than the thing it is polling for is just heat. A failing pass is logged and dropped
+ * exactly as the dead-man sweep's is: the queue is durable, so the next tick tries again.
+ */
+const MAIL_INTERVAL_MS = 60_000;
+
+function drainMail(): void {
+  deliverDueEmails(ctx)
+    .then((result) => {
+      if (result.abandoned > 0) {
+        // Loud, and only for the terminal case. A message this instance has given up on is
+        // somebody who was not told something — the operator has to know, and the admin
+        // screen they would otherwise have to think to open is not enough on its own.
+        console.warn(
+          `mail: gave up on ${result.abandoned} message(s) after repeated failures — see the admin screen`,
+        );
+      }
+    })
+    .catch((error: unknown) => {
+      console.warn('mail delivery failed', error);
+    });
+}
+
+if (config.mail === null) {
+  console.warn(
+    'Mail is off: SMTP_HOST is not set. Invites, password resets and dead-man warnings will be ' +
+      'recorded but not delivered. See .env.example.',
+  );
+} else {
+  // eslint-disable-next-line no-console
+  console.log(
+    `mail: sending through ${config.mail.host}:${config.mail.port} as ${config.mail.from}`,
+  );
+}
+
+drainMail();
+const mailTimer = setInterval(drainMail, MAIL_INTERVAL_MS);
+mailTimer.unref();
+
+/**
+ * Forget delivered mail after a month. Hourly is far more often than needed for a daily
+ * cutoff, and it costs one indexed delete against a table with a handful of rows in it.
+ */
+const mailPruneTimer = setInterval(() => {
+  try {
+    pruneSentEmails(ctx);
+  } catch (error) {
+    console.warn('mail prune failed', error);
+  }
+}, SWEEP_INTERVAL_MS);
+mailPruneTimer.unref();
+
+/**
  * The nightly price refresh.
  *
  * Unlike the dead-man sweep this genuinely wants a fixed time, not "often enough" — AMFI
@@ -127,8 +189,13 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
     // Checkpoint the WAL and close cleanly so the next start does not have to recover.
     clearInterval(sweepTimer);
+    clearInterval(mailTimer);
+    clearInterval(mailPruneTimer);
     priceJob.stop();
     backupJob?.stop();
+    // Releases the pooled SMTP connection, which would otherwise hold the socket open past
+    // the point where the server has stopped answering.
+    ctx.mailer.close();
     server.close(() => {
       close();
       process.exit(0);

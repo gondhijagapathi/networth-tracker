@@ -10,6 +10,7 @@ import { analyticsRouter } from './routes/analytics.js';
 import { assetsRouter } from './routes/assets.js';
 import { backupRouter } from './routes/backup.js';
 import { authRouter } from './routes/auth.js';
+import { checkinRouter } from './routes/checkin.js';
 import { estateRouter } from './routes/estate.js';
 import { exportRouter } from './routes/export.js';
 import { healthRouter } from './routes/health.js';
@@ -78,6 +79,10 @@ export function createApp(ctx: AppContext): Express {
   app.use('/api/nominees', nomineesRouter(ctx));
   app.use('/api/estate', estateRouter(ctx));
   app.use('/api/india', indiaRouter(ctx));
+  // Public by design and mounted at the top level rather than under `/api/estate`, whose
+  // router is behind `requireAuth` in its entirety. See the file for why it is two
+  // endpoints rather than one link that just works.
+  app.use('/api/check-in', checkinRouter(ctx));
   app.use('/api/backup', backupRouter(ctx));
   app.use('/api/export', exportRouter(ctx));
 

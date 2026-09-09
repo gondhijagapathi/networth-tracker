@@ -42,6 +42,12 @@ services:
       COOKIE_SECURE: 'true'
       # Cron expressions match local time. Without this the nightly backup runs at 02:00 UTC.
       TZ: ${TZ:-Asia/Kolkata}
+      # Where links in outgoing email point. Passed straight through, empty included: the
+      # server reads an empty value as unset and falls back to the first CORS_ORIGIN, which
+      # is the origin a browser actually reaches this stack on. Defaulting it here to a
+      # localhost URL instead would override that fallback with the wrong answer on every
+      # install behind a reverse proxy.
+      APP_BASE_URL: ${APP_BASE_URL:-}
 
     volumes:
       # The database, the encrypted upload blobs and the backup bundles. This is the one

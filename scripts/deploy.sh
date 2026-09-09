@@ -258,9 +258,10 @@ write_env() {
 
   local invite port bind tz passphrase behind_proxy public_url cors
   local access_secret refresh_secret encryption_secret
+  local smtp_host smtp_port smtp_user smtp_pass smtp_from
 
   say ''
-  say "This asks four questions. Press Enter to accept the default in ${DIM}grey${RESET}."
+  say "A few questions. Press Enter to accept the default in ${DIM}grey${RESET}."
   say ''
 
   ask invite 'Invite code for the first admin account:' "$(gen_secret | tr -dc 'a-zA-Z0-9' | head -c 12)"
@@ -292,6 +293,57 @@ write_env() {
   if [ -n "$passphrase" ] && [ "${#passphrase}" -lt 12 ]; then
     warn 'Shorter than 12 characters — the server will reject it. Skipping backups for now.'
     passphrase=''
+  fi
+
+  # --- Email ---------------------------------------------------------------
+  #
+  # Asked rather than assumed, and asked last, because it is the only optional part of this
+  # that has a real cost to skipping. Without it nobody can reset a forgotten password and
+  # the dead-man switch cannot warn anyone — which matters precisely because that feature
+  # is for somebody who has stopped opening the app.
+  smtp_host=''; smtp_port='587'; smtp_user=''; smtp_pass=''; smtp_from=''
+
+  say ''
+  say "Email lets this send invite codes, password reset links and dead-man switch warnings."
+  say "  ${DIM}Skip it and the app still works, but a forgotten password cannot be reset and"
+  say "  the dead-man switch's warnings are recorded without being delivered. You can add"
+  say "  the SMTP_* lines to .env later and restart.${RESET}"
+
+  if confirm 'Set up email now?' 'n'; then
+    say ''
+    say "For Gmail you need an ${BOLD}App Password${RESET}, not your account password —"
+    say "  ${DIM}Google stopped accepting the latter over SMTP in 2022. Turn on 2-Step"
+    say "  Verification, then myaccount.google.com -> Security -> App passwords. It is"
+    say "  sixteen characters shown in four groups; paste it with or without the spaces.${RESET}"
+    say ''
+
+    ask smtp_host 'SMTP host:' 'smtp.gmail.com'
+    ask smtp_port 'SMTP port:' '587'
+    ask smtp_user 'Username (your full email address):' ''
+    ask_secret smtp_pass 'Password / App Password (empty to skip email):'
+    # Spaces stripped here as well as in the server's config: an env file carrying a value
+    # with spaces in it is a thing different parsers disagree about, and there is no reason
+    # to find out which one is reading it.
+    smtp_pass="$(printf '%s' "$smtp_pass" | tr -d '[:space:]')"
+
+    if [ -z "$smtp_user" ] || [ -z "$smtp_pass" ]; then
+      warn 'No username or password given — leaving email switched off.'
+      smtp_host=''; smtp_user=''; smtp_pass=''
+    else
+      ask smtp_from 'Send as:' "$smtp_user"
+      case "$smtp_host" in
+        *gmail.com|*googlemail.com)
+          if [ "${#smtp_pass}" -ne 16 ]; then
+            warn "That does not look like a Gmail App Password (16 characters). The server"
+            warn "will refuse to start with it. Fix SMTP_PASS in .env if it fails."
+          fi
+          if [ "$smtp_from" != "$smtp_user" ]; then
+            warn "Gmail rewrites or refuses a From it has not verified on the account."
+            warn "Use $smtp_user unless you have verified $smtp_from as an alias."
+          fi
+          ;;
+      esac
+    fi
   fi
 
   tz="$(host_timezone)"
@@ -345,17 +397,31 @@ NAV_REFRESH_CRON=30 20 * * 1-5
 AMFI_NAV_URL=https://portal.amfiindia.com/spages/NAVAll.txt
 STOCK_PRICE_PROVIDER=manual
 
-# --- Notifications (optional) ---
-SMTP_HOST=
-SMTP_PORT=587
-SMTP_USER=
-SMTP_PASS=
-SMTP_FROM=
+# --- Email ---
+# Empty SMTP_HOST means this instance sends nothing: invites, password resets and dead-man
+# warnings are recorded in the outbox as "not sent" rather than dropped, and the admin
+# Email panel says so. For Gmail, SMTP_PASS must be a 16-character App Password.
+SMTP_HOST=$smtp_host
+SMTP_PORT=$smtp_port
+SMTP_USER=$smtp_user
+SMTP_PASS=$smtp_pass
+SMTP_FROM=$smtp_from
+# Follows the port unless set: 465 is implicit TLS, 587 negotiates it with STARTTLS.
+SMTP_SECURE=
+
+# --- Public URL ---
+# What every link in an outgoing email is built from. It cannot be taken from the request
+# that triggered the mail — a dead-man warning is sent by a timer, and trusting a Host
+# header would let a caller choose where a password-reset link points.
+APP_BASE_URL=$cors
 EOF
   chmod 600 "$INSTALL_DIR/.env"
 
   ok "Wrote $INSTALL_DIR/.env (secrets generated, readable only by you)"
   [ -z "$passphrase" ] && warn 'Scheduled backups are OFF — no BACKUP_PASSPHRASE was set.'
+  [ -z "$smtp_host" ] && warn 'Email is OFF — no password resets, and dead-man warnings are recorded but not sent.'
+
+  DEPLOY_MAIL_HOST="$smtp_host"
 
   DEPLOY_PUBLIC_URL="$cors"
   DEPLOY_INVITE="$invite"
@@ -519,6 +585,23 @@ EOF
 
 EOF
   fi
+  if [ -n "${DEPLOY_MAIL_HOST:-}" ]; then
+    cat <<EOF
+  ${BOLD}Check email works${RESET}
+    Sign in, then Administration -> Email -> Send test email. It goes to your own
+    address, and if the mail server refuses it you get its exact words back — which
+    with Gmail is nearly always "that was an account password, not an App Password".
+
+EOF
+  else
+    cat <<EOF
+  ${YELLOW}Email is off.${RESET} Nobody can reset a forgotten password, and the dead-man
+  switch will record its warnings without sending them. To turn it on, add SMTP_HOST,
+  SMTP_USER and SMTP_PASS to $INSTALL_DIR/.env and run: bash $0 restart
+  ${DIM}For Gmail that is smtp.gmail.com, port 587, and a 16-character App Password.${RESET}
+
+EOF
+  fi
   cat <<EOF
   ${BOLD}Keep these two things${RESET}
     $INSTALL_DIR/.env    the secrets. Rotating them signs everyone out.
@@ -577,7 +660,11 @@ cmd_status() {
 cmd_logs()    { require_docker; compose_cmd logs -f --tail 100 "${@:-}"; }
 cmd_start()   { require_docker; compose_cmd up -d; wait_for_health; }
 cmd_stop()    { require_docker; compose_cmd stop; ok 'Stopped. The data is untouched.'; }
-cmd_restart() { require_docker; compose_cmd restart; wait_for_health; }
+# `up -d --force-recreate` rather than `compose restart`, which reuses the containers as
+# they were created and so does *not* re-read `.env`. Somebody who edits a setting and runs
+# `restart` means "pick that up"; the literal reading would leave them staring at an
+# unchanged app, which is the sort of thing that gets blamed on the setting.
+cmd_restart() { require_docker; compose_cmd up -d --force-recreate; wait_for_health; }
 
 cmd_backup() {
   require_docker
@@ -626,7 +713,7 @@ ${BOLD}Net Worth Tracker — deploy${RESET}
   ${BOLD}status${RESET}      what is running
   ${BOLD}logs${RESET}        follow the logs
   ${BOLD}backup${RESET}      take an encrypted backup now
-  ${BOLD}start${RESET} / ${BOLD}stop${RESET} / ${BOLD}restart${RESET}
+  ${BOLD}start${RESET} / ${BOLD}stop${RESET} / ${BOLD}restart${RESET}   restart also picks up .env changes
   ${BOLD}uninstall${RESET}   stop and remove; asks separately about the data
 
   ${BOLD}Environment${RESET}

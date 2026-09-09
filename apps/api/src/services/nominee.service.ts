@@ -41,9 +41,11 @@ import {
   type VaultEscrowRow,
 } from '../db/schema.js';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
+import { estateReleasedEmail } from '../lib/mailTemplates.js';
 import { isoNow } from '../lib/time.js';
 import { recordAudit } from './audit.service.js';
 import { createInvite } from './invite.service.js';
+import { queueEmail } from './mail.service.js';
 
 /* -------------------------------------------------------------------------- */
 /* Reads                                                                      */
@@ -175,19 +177,38 @@ export function inviteNominee(
   ownerUserId: string,
   id: string,
   ip: string | null,
-): { nominee: NomineeRecord; code: string } {
+): { nominee: NomineeRecord; code: string; emailQueued: boolean } {
   const existing = ownedNominee(ctx, ownerUserId, id);
   if (!existing.email) {
     throw badRequest('Add an email address before inviting this nominee');
   }
   if (existing.nomineeUserId) throw conflict('That nominee already has an account');
 
-  const { code } = createInvite(ctx, ownerUserId, {
-    email: existing.email,
-    role: 'nominee',
-    expiresInDays: 30,
-    note: `Nominee invite for ${existing.name}`,
-  });
+  const owner = ctx.db
+    .select({ name: users.name })
+    .from(users)
+    .where(eq(users.id, ownerUserId))
+    .get();
+
+  const { code, emailQueued } = createInvite(
+    ctx,
+    ownerUserId,
+    {
+      email: existing.email,
+      role: 'nominee',
+      expiresInDays: 30,
+      note: `Nominee invite for ${existing.name}`,
+      sendEmail: true,
+    },
+    {
+      // A nominee is the one invitee who has no idea this application exists, so the mail
+      // has to say who named them and why before it asks them to make an account.
+      kind: 'nominee',
+      ownerName: owner?.name ?? 'Somebody',
+      nomineeName: existing.name,
+      accessLevel: existing.accessLevel,
+    },
+  );
 
   const now = isoNow(ctx.now());
   ctx.db.update(nominees).set({ invitedAt: now, updatedAt: now }).where(eq(nominees.id, id)).run();
@@ -203,6 +224,7 @@ export function inviteNominee(
   return {
     nominee: toRecord({ ...existing, invitedAt: now }, escrowOf(ctx, id), false),
     code,
+    emailQueued,
   };
 }
 
@@ -378,10 +400,64 @@ export function releaseEscrow(
     meta: { nomineeId, reason },
   });
 
+  notifyHeirOfRelease(ctx, escrow, reason);
+
   return toEscrowSummary(released);
 }
 
 /** Every sealed escrow an owner holds. The dead-man switch fires against exactly this list. */
+/**
+ * Tell the heir their key is open.
+ *
+ * The single most consequential notification this application sends, and the reason it is
+ * sent at all: an escrow that opens silently is a claim kit nobody knows to look at. It
+ * goes to the address on the *nominee record* rather than the linked account, because those
+ * can differ and the record is what the owner actually wrote down.
+ *
+ * Failure here is swallowed. A release has already happened and is already audited; a
+ * notification that could not be composed must not roll that back or bubble a 500 into the
+ * dead-man sweep that is releasing the next one.
+ */
+function notifyHeirOfRelease(
+  ctx: AppContext,
+  escrow: VaultEscrowRow,
+  reason: EscrowReleaseReason,
+): void {
+  try {
+    const nominee = ctx.db.select().from(nominees).where(eq(nominees.id, escrow.nomineeId)).get();
+    const grantee = ctx.db
+      .select({ email: users.email })
+      .from(users)
+      .where(eq(users.id, escrow.granteeUserId))
+      .get();
+
+    const to = nominee?.email ?? grantee?.email;
+    if (!to) return;
+
+    const owner = ctx.db
+      .select({ name: users.name })
+      .from(users)
+      .where(eq(users.id, escrow.ownerUserId))
+      .get();
+
+    queueEmail(
+      ctx,
+      to,
+      estateReleasedEmail(
+        { baseUrl: ctx.config.appBaseUrl },
+        {
+          nomineeName: nominee?.name ?? 'Hello',
+          ownerName: owner?.name ?? 'The account holder',
+          reason,
+        },
+      ),
+      { userId: escrow.granteeUserId },
+    );
+  } catch {
+    // See the doc comment: the release stands regardless.
+  }
+}
+
 export function sealedEscrows(ctx: AppContext, ownerUserId: string): VaultEscrowRow[] {
   return ctx.db
     .select()

@@ -135,6 +135,64 @@ export const changePasswordSchema = z
   });
 export type ChangePasswordBody = z.infer<typeof changePasswordSchema>;
 
+/* -------------------------------------------------------------------------- */
+/* Password reset                                                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Ask for a reset link.
+ *
+ * The address is the whole input, and the answer never varies with it: an endpoint that
+ * said "no account with that email" would be the account-enumeration oracle the login form
+ * carefully is not.
+ */
+export const forgotPasswordSchema = z.object({
+  email: emailSchema,
+});
+export type ForgotPasswordBody = z.infer<typeof forgotPasswordSchema>;
+
+/**
+ * A reset token as it appears in the emailed link — 256 random bits in base64url.
+ *
+ * The bounds check the shape, not the value. What actually admits a token is matching the
+ * HMAC stored against an unexpired, unused row.
+ */
+export const resetTokenSchema = z
+  .string()
+  .trim()
+  .min(20, 'That reset link is not valid')
+  .max(200, 'That reset link is not valid');
+
+/**
+ * Finish a reset.
+ *
+ * `totp` is not optional in spirit, only in shape: an account with a second factor must
+ * present one here too. Without that rule, control of a mailbox would be enough to walk
+ * past 2FA entirely, which would make enrolling in it close to pointless. The server
+ * answers `totp_required` — the same code the login form already knows how to handle —
+ * rather than failing, so the field appears when it is needed and not before.
+ */
+export const resetPasswordSchema = z.object({
+  token: resetTokenSchema,
+  password: passwordSchema,
+  totp: secondFactorSchema.optional(),
+});
+export type ResetPasswordBody = z.infer<typeof resetPasswordSchema>;
+
+/**
+ * What the reset page learns before it shows a form.
+ *
+ * Deliberately not the email address. Whoever holds the token can already set the
+ * password, so the address would tell them nothing they cannot get — but the same request
+ * with a guessed token would turn this into a way to test addresses, and there is no
+ * reason to build that.
+ */
+export interface ResetTokenCheck {
+  valid: boolean;
+  /** Whether the account behind the token will also want a second factor. */
+  totpRequired: boolean;
+}
+
 export const enrolTotpSchema = z.object({
   code: totpCodeSchema,
 });
@@ -152,6 +210,12 @@ export const createInviteSchema = z.object({
   role: roleSchema.default('member'),
   expiresInDays: z.coerce.number().int().min(1).max(90).default(7),
   note: z.string().trim().max(200).optional(),
+  /**
+   * Whether to mail the code to `email`. Ignored entirely without one — an unbound invite
+   * has nowhere to go. Defaults on, because an admin who typed an address meant to reach
+   * that person; unticking it is how you get a code to read out over the phone instead.
+   */
+  sendEmail: z.boolean().default(true),
 });
 export type CreateInviteBody = z.infer<typeof createInviteSchema>;
 

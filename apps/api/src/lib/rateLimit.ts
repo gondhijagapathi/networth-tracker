@@ -67,6 +67,27 @@ export const VAULT_POLICY: RateLimitPolicy = {
   message: 'Too many vault unlock attempts. Wait a moment and try again.',
 };
 
+/**
+ * Password reset requests.
+ *
+ * The odd one out: it counts *successes*, because a reset request has no failure to count.
+ * The endpoint answers identically whether or not the address exists, so there is nothing
+ * for an attacker to learn by repeating it — what this limits is the nuisance, which is
+ * real. Without it, anyone who knows a household member's address can fill their inbox with
+ * genuine reset links from this server, and a person buried in twenty of them is
+ * measurably more likely to click one they should not.
+ *
+ * Three free requests, then a slow doubling. A person who genuinely lost the first email
+ * asks twice; nobody asks four times in a minute.
+ */
+export const RESET_POLICY: RateLimitPolicy = {
+  freeAttempts: 3,
+  baseDelaySeconds: 60,
+  maxDelaySeconds: 3600,
+  windowSeconds: 86400,
+  message: 'Too many password reset requests. Check your inbox, then try again later.',
+};
+
 interface Entry {
   failures: number;
   /** Epoch ms before which no attempt is allowed. */

@@ -140,16 +140,94 @@ wrapped key holds a copy of the data key. Genuinely taking that back means re-en
 every vault item under a new key, which this build does not do. The UI says so at the point
 of release rather than implying otherwise with a green tick.
 
-**Warnings are recorded, not delivered.** This build has no mail transport, so the 50/75/90%
-stages write `audit_log` rows and raise a banner the owner sees on their next visit. Email
-and push are in the backlog; until then the warning is weaker than the design intends, and
-`docs/TASKS.md` says so rather than letting a checked box imply an email that never went
-out.
+**Warnings are delivered, and also recorded.** Each of the 50/75/90% stages queues an email
+to the owner, writes an `audit_log` row and raises a banner they see on their next visit. So
+does the grace period opening, and the release itself — the owner is told, and each heir is
+told separately. The email is the part that matters: the premise of the feature is somebody
+who is not opening the app.
+
+That depends on `SMTP_HOST` being configured. Without it every message is recorded in
+`email_outbox` as `suppressed` rather than dropped, the banner is all there is, and the
+admin Email panel says so in as many words. An operator who never sets up mail should be
+able to discover that before the day it matters, not after.
+
+**Warnings carry a check-in link, and the link is not the check-in.** The feature measures
+people who have stopped opening the app, so requiring a sign-in to prove aliveness asks for
+the exact behaviour whose absence is the signal. Each warning therefore carries a
+single-use token, valid 30 days, that resets the clock and does nothing else — no session,
+no read, no access to anything.
+
+Following the link only opens a page; a human pressing the button is what checks in. That
+split is load-bearing. Gmail, Outlook Safe Links and antivirus gateways fetch every URL in a
+message before a human sees it, so a link that checked somebody in on arrival would let a
+scanner answer each warning on the morning it landed — the switch would never advance and
+the escrows would never open. That failure is silent and happens only to somebody who has
+died, which is the worst combination available. It is the same reasoning that makes fetching
+an escrowed key a `POST`.
+
+What this does mean is that anyone who can read the owner's mailbox can postpone the switch.
+That is a real limitation, and it is bounded: the same mailbox already receives password
+reset links, which are strictly more powerful, and the token cannot release anything, only
+delay. Every use writes a `deadman.checkin_emailed` audit row.
+
+**Mail is queued, never sent inline.** Everything outbound goes through `email_outbox`, and
+a background loop delivers it with exponential backoff over roughly two hours before giving
+up. A message that is given up on writes an `email.failed` audit row: somebody was not told
+something, and that non-event is worth as much of a record as the events around it.
+
+**Queued bodies are encrypted at rest.** A pending row holds whatever the message says — a
+live password-reset link, an unredeemed invite code — so the body is sealed with a key
+derived from `SECRET_ENCRYPTION_KEY`, exactly as a TOTP seed is. It is cleared the moment
+the message is accepted, so a delivered row keeps only its envelope. Subjects stay in the
+clear and never name a secret, which is what makes the admin mail log safe to render.
+
+## Password reset
+
+There is no support desk on a self-hosted install, so an account that cannot be recovered is
+an account lost — along with the record of what a household owns, at the moment somebody
+needs it. The flow therefore exists, and it is built for safety over convenience:
+
+- **It reveals nothing.** `POST /api/auth/forgot-password` answers `204` identically for an
+  address with an account, without one, and for a suspended account. The login form takes
+  some trouble not to be an enumeration oracle; a reset form that said "no account with that
+  email" would give the whole thing away.
+- **A second factor stays a second factor.** An account with TOTP enrolled must present it
+  on the reset too. Otherwise control of a mailbox is control of the account, and enrolling
+  in 2FA would buy nothing against the attacker it is actually for.
+- **Links are single-use and short-lived.** A 256-bit token, stored only as an HMAC under
+  `SECRET_ENCRYPTION_KEY`, valid for one hour. Asking for a new one invalidates the old one,
+  and changing the password from a signed-in session invalidates any outstanding link.
+- **Completing a reset does not sign you in.** Proving control of a mailbox is not proving
+  you know the password you just chose. The reset ends at the sign-in form.
+- **The vault is untouched.** The vault passphrase is derived in the browser and this server
+  has never held anything that could recover it, so a login reset leaves the vault exactly as
+  sealed as it was. The email says so, because the alternative is somebody discovering it by
+  guessing.
+
+## Session revocation
+
+Refresh tokens are rows and can be marked revoked. The access token is a stateless JWT and
+would otherwise keep working for its full fifteen minutes no matter what the database said —
+so every account carries a `session_epoch`, stamped into each access token as it is minted
+and bumped whenever sessions are revoked wholesale. `requireAuth` rejects any token whose
+epoch no longer matches, on the very next request.
+
+That is what makes "changing your password signs you out everywhere" true immediately rather
+than eventually, and it applies to all three callers: a password change, a password reset,
+and an admin locking an account. A counter rather than a timestamp because `iat` has only
+whole-second resolution, and comparing timestamps would need a tolerance — which is a window
+in which a revoked token still works.
 
 ## What this does *not* protect against
 
 Stated plainly rather than glossed over:
 
+- **Email in transit and at the far end.** SMTP goes out over TLS and this app requires
+  STARTTLS rather than merely attempting it, but once a message is delivered it sits in a
+  mailbox this application does not control. Anyone who can read that mailbox can use a
+  reset link or an unredeemed invite code in it — which is why links expire in an hour,
+  invites default to a week, and 2FA is still demanded on a reset. If you use Gmail as the
+  transport, Google can read everything this instance sends.
 - **You own the server.** Someone with root on the host can modify the application code to
   release an escrow early, or capture a passphrase as it is typed. The cryptography protects
   data **at rest and in backups**; it is not a defence against a compromised host. Keep the

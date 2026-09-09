@@ -54,6 +54,14 @@ risk, a zero-knowledge vault for credentials, nominee accounts with read-only ac
 optional dead-man switch, and generated claim kits listing the exact forms each institution
 wants.
 
+**Email** — optional SMTP, with a Gmail-shaped setup path. Invites and nominee invitations
+arrive with a code and a link, new accounts get a welcome, forgotten passwords get a
+single-use hourly reset link that still demands your second factor, and the dead-man switch
+actually warns you — at 50%, 75% and 90% of your window, again when the grace period opens,
+and once more if it ever fires — and those warnings carry a one-click check-in link, so
+saying "still here" needs no sign-in. Nothing sends on the request thread: messages go through an
+encrypted outbox that retries, and an admin panel shows what went out, what failed and why.
+
 **Household** — partners can merge their data into one household view by mutual consent,
 with joint assets split by ownership so nothing is double-counted. Either side can revoke
 instantly.
@@ -171,11 +179,17 @@ All routes are under `/api`. Sessions are cookie-based; mutating requests must e
 | `POST` | `/auth/logout` | Revoke this session family and clear cookies |
 | `GET` | `/auth/me` | The signed-in user |
 | `POST` | `/auth/password` | Change password; signs out every device |
+| `POST` | `/auth/forgot-password` | Email a reset link. Answers `204` whether or not the address has an account |
+| `GET`/`POST` | `/auth/reset-password` | Check a link, then set the new password |
+| `GET`/`POST` | `/check-in` | Read an emailed dead-man check-in link, then confirm it. Public; the GET is deliberately inert so mail scanners cannot check you in |
 | `GET`/`DELETE` | `/auth/sessions[/:id]` | List signed-in devices; revoke one |
 | `POST` | `/auth/2fa/enrol`, `/enrol/confirm`, `/disable` | TOTP enrolment and removal |
 | `GET`/`PATCH` | `/admin/users[/:id]` | List accounts; suspend, reactivate, change role |
 | `POST` | `/admin/users/:id/revoke-sessions` | Sign a user out everywhere |
 | `GET`/`POST`/`DELETE` | `/admin/invites[/:id]` | Issue, list and withdraw invites |
+| `GET` | `/admin/mail` | Whether mail is configured, the queue, and recent failures |
+| `POST` | `/admin/mail/test` | Send a test message to your own address. Takes no recipient |
+| `POST` | `/admin/mail/:id/retry` | Put a failed message back in the queue |
 | `GET`/`POST` | `/assets` | List (filter, search, sort, paginate) and create assets |
 | `GET` | `/assets/counts` | Counts by type and status, for the list's filter chips |
 | `GET`/`PATCH`/`DELETE` | `/assets/:id` | Read, update and archive one asset |
@@ -235,7 +249,15 @@ and has no code path that can decrypt any of it — which also means backups are
 construction. Uploaded documents are encrypted too, filename included.
 
 Nobody can reset a forgotten vault passphrase: not an administrator, not whoever runs the
-server. That is the point, and the app says so before you choose one.
+server. That is the point, and the app says so before you choose one — including in the
+password-reset email, because resetting your *login* password is a different thing and
+people reasonably assume otherwise.
+
+Password resets never reveal whether an address has an account, links are single-use and
+expire in an hour, and an account with 2FA must still present it — control of a mailbox is
+not a way past a second factor. Any wholesale revocation bumps a session epoch carried in
+every access token, so signing out everywhere takes effect on the next request rather than
+when a fifteen-minute JWT happens to expire.
 
 This is self-hosted software for a small trusted circle. It assumes you control the machine.
 Read [`docs/SECURITY-MODEL.md`](docs/SECURITY-MODEL.md) — including the section on what it

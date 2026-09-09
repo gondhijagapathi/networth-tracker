@@ -31,16 +31,19 @@ SQLite, WAL mode, foreign keys on. Drizzle ORM defines the schema in
 
 | Table | Purpose |
 | ----- | ------- |
-| `users` | email (lowercased, unique), argon2id `password_hash`, name, role (`admin`/`member`/`nominee`), status (`active`/`suspended`), `last_active_at`, encrypted TOTP secret. The RSA keypair lives in `vault_keys`, not here — it is wrapped by the vault passphrase and has no meaning without one |
+| `users` | email (lowercased, unique), argon2id `password_hash`, name, role (`admin`/`member`/`nominee`), status (`active`/`suspended`), `last_active_at`, encrypted TOTP secret, `session_epoch`. The RSA keypair lives in `vault_keys`, not here — it is wrapped by the vault passphrase and has no meaning without one. `session_epoch` is bumped on any wholesale revocation and stamped into every access token, which is what makes a password change sign every device out *immediately* rather than when the fifteen-minute JWT expires |
 | `invites` | code hash, email, role, expiry, `consumed_by`. The only path to an account |
 | `refresh_tokens` | HMAC'd token, family id, device label, expiry, revoked flag, successor id. One row per issued token; rotation writes a new row and revokes the old |
 | `recovery_codes` | hashed single-use TOTP recovery codes, `used_at` |
+| `password_resets` | HMAC'd token, requesting ip, expiry, `used_at`, `invalidated_at`. Modelled on `refresh_tokens`: opaque random value, only its hash stored, revocable. Rows survive use — "this account's password was reset from that address at that time" is exactly what somebody wants after a takeover |
 | `settings` | per-user KV: theme, lakh/crore display, privacy blur, partner-merge toggle |
 | `households` | id, name, created_by |
 | `household_members` | household, user, role (`owner`/`partner`/`member`), `share_mode` (`full`/`summary`/`none`), consent + accepted timestamps |
 | `nominees` | owner → nominee user (null until they accept), email, name, relation, `share_percent_bps`, `access_level` (`summary`/`full`/`vault`), status (`invited`/`accepted`/`revoked`) |
 | `access_grants` | the one table every scoped query consults: owner, grantee, `scope` (`summary`/`full`/`vault`), `source` (`household`/`nominee`/`manual`) and the row that created it, granted_at, expires_at, revoked_at. Read-only in every case — no scope confers a write |
 | `audit_log` | actor, action, entity type + id, at, ip, meta JSON |
+| `deadman_checkins` | HMAC'd token, the stage whose email carried it, expiry, `used_at`. A single-use "I am still here" link that resets the dead-man clock and grants nothing else. Following the link does not spend it — a human pressing a button does, because mail scanners prefetch links and a scanner answering for a dead owner would keep the switch alive for ever |
+| `email_outbox` | kind, recipient, subject, sealed body, status (`pending`/`sent`/`failed`/`suppressed`), attempts, `next_attempt_at`, last error. Nothing sends on the request thread; a background loop drains this with exponential backoff. The body is encrypted under `SECRET_ENCRYPTION_KEY` because a pending row holds a live reset link or an unredeemed invite code, and cleared once the message is accepted. Delivered rows are pruned after 30 days; failed ones never are |
 
 ## Vault
 

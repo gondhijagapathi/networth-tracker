@@ -54,6 +54,21 @@ export const users = sqliteTable(
     totpEnabled: integer('totp_enabled', { mode: 'boolean' }).notNull().default(false),
     /** Drives the dead-man switch; written on every successful authentication. */
     lastActiveAt: text('last_active_at'),
+    /**
+     * Bumped every time this account's sessions are revoked wholesale — a password change,
+     * a password reset, an admin locking the account.
+     *
+     * Refresh tokens are rows and can be marked revoked; the access token is a stateless
+     * JWT that would otherwise keep working for its full fifteen minutes no matter what the
+     * database says. Each access token carries the epoch it was minted under, and
+     * `requireAuth` rejects any that no longer matches — which is what makes "changing your
+     * password signs you out everywhere" true immediately rather than eventually.
+     *
+     * A counter rather than a timestamp on purpose. A timestamp has to be compared with a
+     * tolerance, because `iat` has only whole-second resolution, and that tolerance is a
+     * window in which a revoked token still works. An integer is exact.
+     */
+    sessionEpoch: integer('session_epoch').notNull().default(0),
     createdAt: text('created_at').notNull().default(nowUtc),
     updatedAt: text('updated_at').notNull().default(nowUtc),
   },
@@ -1074,6 +1089,135 @@ export const deadManSwitch = sqliteTable(
 );
 
 /* -------------------------------------------------------------------------- */
+/* password resets                                                            */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * An outstanding "forgot my password" link.
+ *
+ * Modelled on `refresh_tokens` and for the same reason: the token is an opaque random
+ * value, only its HMAC is stored, and a row can be taken back. A JWT would be neither
+ * revocable nor absent from a stolen database in any useful sense.
+ *
+ * Rows are kept after use rather than deleted. "This account's password was reset from
+ * that address at that time" is exactly the history somebody will want if an account is
+ * ever taken over, and a deleted row cannot tell them.
+ */
+export const passwordResets = sqliteTable(
+  'password_resets',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    /** HMAC-SHA-256 of the emailed token under `SECRET_ENCRYPTION_KEY`. */
+    tokenHash: text('token_hash').notNull().unique(),
+    /** The address that asked, so a burst of requests has a shape when read back. */
+    requestedIp: text('requested_ip'),
+    expiresAt: text('expires_at').notNull(),
+    usedAt: text('used_at'),
+    /**
+     * Set when a newer request, or the password changing by another route, made this link
+     * moot. Distinct from `used_at`: one of them means somebody followed the link.
+     */
+    invalidatedAt: text('invalidated_at'),
+    createdAt: text('created_at').notNull().default(nowUtc),
+  },
+  (table) => [index('password_resets_user_idx').on(table.userId, table.createdAt)],
+);
+
+/* -------------------------------------------------------------------------- */
+/* email outbox                                                               */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Mail that has been composed but not yet handed to an SMTP server.
+ *
+ * Nothing in this application sends email on the request thread. A queued row is written
+ * inside whatever transaction produced it and a background loop drains it, which buys three
+ * things: an invite is not lost because Gmail was briefly unreachable, a slow SMTP
+ * handshake cannot stall a login, and a dead-man warning — the one message that genuinely
+ * matters and has no user waiting on it — is retried rather than dropped.
+ *
+ * `body_encrypted` is the whole rendered message, sealed with `SECRET_ENCRYPTION_KEY` the
+ * same way a TOTP seed is. A pending row holds a live password-reset link or an unredeemed
+ * invite code; storing those in the clear would undo the care taken to keep the same
+ * secrets out of `invites` and `refresh_tokens`. It is cleared the moment the message is
+ * accepted, so a delivered row keeps only its envelope.
+ */
+export const emailOutbox = sqliteTable(
+  'email_outbox',
+  {
+    id: text('id').primaryKey(),
+    kind: text('kind').notNull(),
+    toEmail: text('to_email').notNull(),
+    /** Not a foreign key: mail goes to nominees and invitees who have no account yet. */
+    userId: text('user_id').references(() => users.id, { onDelete: 'set null' }),
+    /** In the clear. It names the event, never the secret — see the templates. */
+    subject: text('subject').notNull(),
+    /** Sealed JSON `{text, html}`. Null once sent, or once permanently failed. */
+    bodyEncrypted: text('body_encrypted'),
+    status: text('status', { enum: ['pending', 'sent', 'failed', 'suppressed'] })
+      .notNull()
+      .default('pending'),
+    attempts: integer('attempts').notNull().default(0),
+    /** Null for anything terminal. A pending row is due when this is in the past. */
+    nextAttemptAt: text('next_attempt_at'),
+    lastError: text('last_error'),
+    createdAt: text('created_at').notNull().default(nowUtc),
+    sentAt: text('sent_at'),
+  },
+  (table) => [
+    // The drain query is "pending rows that are due, oldest first", and it runs once a
+    // minute forever.
+    index('email_outbox_due_idx').on(table.status, table.nextAttemptAt),
+    index('email_outbox_created_idx').on(table.createdAt),
+    check(
+      'email_outbox_status_check',
+      sql`${table.status} in ('pending', 'sent', 'failed', 'suppressed')`,
+    ),
+  ],
+);
+
+/* -------------------------------------------------------------------------- */
+/* dead-man check-in links                                                    */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * A "yes, I am still here" link, as emailed with a dead-man warning.
+ *
+ * The point of the whole feature is somebody who has stopped opening the app, so requiring
+ * them to sign in to say they are alive asks for the exact behaviour whose absence is being
+ * measured. This is the way out: the warning email carries a link, and following it resets
+ * the clock without granting a session or reading anything.
+ *
+ * Structured like `password_resets` — opaque random value, only its HMAC stored, single use,
+ * expiring — with one difference that matters more here than anywhere else in the schema:
+ * **following the link is not what checks you in.** Mail providers and corporate security
+ * appliances fetch the links in a message before a human ever sees it. If a `GET` performed
+ * the check-in, a link scanner would keep a dead owner's switch alive indefinitely and the
+ * escrows would never release. So the link opens a page, and a human presses a button. The
+ * same reasoning is why `POST /estate/:ownerId/key` is a POST.
+ */
+export const deadManCheckins = sqliteTable(
+  'deadman_checkins',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    /** HMAC-SHA-256 of the emailed token under `SECRET_ENCRYPTION_KEY`. */
+    tokenHash: text('token_hash').notNull().unique(),
+    /** The stage whose email carried this, so the audit trail says which nudge worked. */
+    stage: text('stage').notNull(),
+    expiresAt: text('expires_at').notNull(),
+    usedAt: text('used_at'),
+    createdAt: text('created_at').notNull().default(nowUtc),
+  },
+  (table) => [index('deadman_checkins_user_idx').on(table.userId, table.createdAt)],
+);
+
+/* -------------------------------------------------------------------------- */
 /* row types                                                                  */
 /* -------------------------------------------------------------------------- */
 
@@ -1094,3 +1238,6 @@ export type VaultEscrowRow = typeof vaultEscrow.$inferSelect;
 export type DeadManSwitchRow = typeof deadManSwitch.$inferSelect;
 export type NomineeRow = typeof nominees.$inferSelect;
 export type DocumentRow = typeof documents.$inferSelect;
+export type PasswordResetRow = typeof passwordResets.$inferSelect;
+export type EmailOutboxRow = typeof emailOutbox.$inferSelect;
+export type DeadManCheckinRow = typeof deadManCheckins.$inferSelect;
