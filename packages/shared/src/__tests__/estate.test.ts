@@ -12,7 +12,6 @@ import {
   configureDeadManSchema,
   createNomineeSchema,
   sealEscrowSchema,
-  sharePercentBpsSchema,
 } from '../estate.js';
 import { ASSET_TYPES } from '../assets.js';
 import { toBase64Url } from '../vault.js';
@@ -50,11 +49,6 @@ describe('createNomineeSchema', () => {
     expect(createNomineeSchema.parse({ name: 'Priya', email: '  Priya@Example.COM ' }).email).toBe(
       'priya@example.com',
     );
-  });
-
-  it('rejects a share above one hundred per cent', () => {
-    expect(sharePercentBpsSchema.safeParse(10_001).success).toBe(false);
-    expect(sharePercentBpsSchema.safeParse(3_333).success).toBe(true);
   });
 });
 

@@ -96,7 +96,6 @@ export function createNominee(
     email: body.email ?? null,
     name: body.name,
     relation: body.relation ?? null,
-    sharePercentBps: body.sharePercentBps,
     accessLevel: body.accessLevel,
     status: 'invited',
     invitedAt: null,
@@ -139,7 +138,6 @@ export function updateNominee(
   if (body.name !== undefined) patch.name = body.name;
   if (body.email !== undefined) patch.email = body.email;
   if (body.relation !== undefined) patch.relation = body.relation;
-  if (body.sharePercentBps !== undefined) patch.sharePercentBps = body.sharePercentBps;
   if (body.accessLevel !== undefined) patch.accessLevel = body.accessLevel;
 
   ctx.db.update(nominees).set(patch).where(eq(nominees.id, id)).run();
@@ -495,7 +493,6 @@ export function listEstates(ctx: AppContext, granteeUserId: string): EstateSumma
     ownerName: owner.name,
     ownerEmail: owner.email,
     relation: nominee.relation,
-    sharePercentBps: nominee.sharePercentBps,
     accessLevel: nominee.accessLevel as NomineeAccessLevel,
     escrowState: escrow?.state ?? null,
     wrappedDek: escrow?.state === 'released' ? escrow.wrappedDek : null,
@@ -761,7 +758,6 @@ function toRecord(row: NomineeRow, escrow: VaultEscrowRow | null, hasKey: boolea
     name: row.name,
     email: row.email,
     relation: row.relation,
-    sharePercentBps: row.sharePercentBps,
     accessLevel: row.accessLevel as NomineeAccessLevel,
     status: row.status,
     nomineeUserId: row.nomineeUserId,

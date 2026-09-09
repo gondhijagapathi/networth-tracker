@@ -131,8 +131,7 @@ export function ClaimKit() {
               {kit.nominees.map((nominee) => (
                 <li key={`${nominee.name}-${nominee.email ?? ''}`}>
                   {nominee.name}
-                  {nominee.relation !== null && ` (${nominee.relation})`} —{' '}
-                  {(nominee.sharePercentBps / 100).toFixed(0)}%
+                  {nominee.relation !== null && ` (${nominee.relation})`}
                   {nominee.email !== null && ` · ${nominee.email}`}
                 </li>
               ))}

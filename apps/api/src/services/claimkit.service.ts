@@ -115,7 +115,6 @@ export function claimKit(
       name: nominees.name,
       email: nominees.email,
       relation: nominees.relation,
-      sharePercentBps: nominees.sharePercentBps,
       accessLevel: nominees.accessLevel,
       status: nominees.status,
     })
@@ -141,7 +140,6 @@ export function claimKit(
       name: row.name,
       email: row.email,
       relation: row.relation,
-      sharePercentBps: row.sharePercentBps,
     })),
     totals: {
       assetPaise,

@@ -76,7 +76,6 @@ async function establishEstate(
     name: 'Priya',
     email: 'priya@example.com',
     relation: 'spouse',
-    sharePercentBps: 5_000,
     accessLevel: options.accessLevel ?? 'vault',
   });
   expect(created.status).toBe(201);

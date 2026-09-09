@@ -193,7 +193,6 @@ function NomineeCard({ nominee, onChanged }: { nominee: NomineeRecord; onChanged
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="text-sm font-semibold">{nominee.name}</h3>
             {nominee.relation !== null && <Pill>{nominee.relation}</Pill>}
-            <Pill>{(nominee.sharePercentBps / 100).toFixed(0)}% share</Pill>
             <Pill>{ACCESS_LABELS[nominee.accessLevel]}</Pill>
           </div>
           <p className="mt-1 text-sm" style={{ color: 'var(--text-secondary)' }}>
@@ -330,7 +329,6 @@ function NomineeForm({ onClose, onSaved }: { onClose: () => void; onSaved: () =>
   const [form, setForm] = useState<CreateNomineeBody>({
     name: '',
     relation: '',
-    sharePercentBps: 10_000,
     accessLevel: 'full',
   });
   const [email, setEmail] = useState('');
@@ -383,24 +381,14 @@ function NomineeForm({ onClose, onSaved }: { onClose: () => void; onSaved: () =>
           />
         </Field>
 
-        <Field
-          label="Email"
-          hint="Optional. Needed only if you want to give them an account they can sign in to."
-        >
-          <Input type="email" value={email} onChange={(event) => setEmail(event.target.value)} />
-        </Field>
-
-        <Field label="Share" hint="What you intend them to inherit. This app does not enforce it.">
-          <Input
-            type="number"
-            min={0}
-            max={100}
-            value={form.sharePercentBps / 100}
-            onChange={(event) =>
-              setForm({ ...form, sharePercentBps: Math.round(Number(event.target.value) * 100) })
-            }
-          />
-        </Field>
+        <div className="sm:col-span-2">
+          <Field
+            label="Email"
+            hint="Optional. Needed only if you want to give them an account they can sign in to."
+          >
+            <Input type="email" value={email} onChange={(event) => setEmail(event.target.value)} />
+          </Field>
+        </div>
 
         <div className="sm:col-span-2">
           <Field label="What they may see" hint={ACCESS_HINTS[form.accessLevel]}>

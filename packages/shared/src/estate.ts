@@ -36,19 +36,11 @@ export const NOMINEE_STATUSES = ['invited', 'accepted', 'revoked'] as const;
 export const nomineeStatusSchema = z.enum(NOMINEE_STATUSES);
 export type NomineeStatus = z.infer<typeof nomineeStatusSchema>;
 
-/** Basis points, so a one-third share is 3333 rather than a float that never sums to 100. */
-export const sharePercentBpsSchema = z.coerce
-  .number()
-  .int('Share must be a whole number of basis points')
-  .min(0)
-  .max(10_000, 'A share cannot exceed 100%');
-
 export const createNomineeSchema = z.object({
   name: z.string().trim().min(1, 'Name is required').max(80),
   /** Optional until you want them to log in — a nomination can be recorded for anyone. */
   email: emailSchema.optional(),
   relation: z.string().trim().max(40).optional(),
-  sharePercentBps: sharePercentBpsSchema.default(0),
   accessLevel: nomineeAccessLevelSchema.default('summary'),
 });
 export type CreateNomineeBody = z.infer<typeof createNomineeSchema>;
@@ -80,7 +72,6 @@ export interface NomineeRecord {
   name: string;
   email: string | null;
   relation: string | null;
-  sharePercentBps: number;
   accessLevel: NomineeAccessLevel;
   status: NomineeStatus;
   /** Set once they have registered and their account is linked to this nomination. */
@@ -108,7 +99,6 @@ export interface EstateSummary {
   ownerName: string;
   ownerEmail: string;
   relation: string | null;
-  sharePercentBps: number;
   accessLevel: NomineeAccessLevel;
   /** `sealed` means the vault is visible as ciphertext and openable by nobody but the owner. */
   escrowState: EscrowState | null;
@@ -376,7 +366,7 @@ export interface ClaimKitResponse {
   owner: { id: string; name: string; email: string };
   generatedAt: string;
   entries: ClaimKitEntry[];
-  nominees: Array<Pick<NomineeRecord, 'name' | 'relation' | 'sharePercentBps' | 'email'>>;
+  nominees: Array<Pick<NomineeRecord, 'name' | 'relation' | 'email'>>;
   totals: {
     assetPaise: number;
     liabilityPaise: number;
