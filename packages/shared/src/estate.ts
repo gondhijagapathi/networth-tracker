@@ -183,6 +183,44 @@ export interface DeadManStatus {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Check-in links                                                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The token in a "still there?" link, as emailed with a dead-man warning.
+ *
+ * Random and opaque; the bounds check the shape, not the value.
+ */
+export const checkInTokenSchema = z
+  .string()
+  .trim()
+  .min(20, 'That check-in link is not valid')
+  .max(200, 'That check-in link is not valid');
+
+export const checkInSchema = z.object({ token: checkInTokenSchema });
+export type CheckInBody = z.infer<typeof checkInSchema>;
+
+/**
+ * What the check-in page learns before it draws its button.
+ *
+ * Enough to be worth clicking and no more. The name is included because a page asking you
+ * to confirm you are alive, naming no account, is indistinguishable from a phishing
+ * attempt — and whoever holds this token took it out of that person's own inbox.
+ *
+ * Note what is absent: any figure, any asset, any nominee's name. This page is reachable
+ * with nothing but a link, so it says only that a switch exists and when it would fire.
+ */
+export interface CheckInPrompt {
+  valid: boolean;
+  name: string | null;
+  stage: DeadManStage | null;
+  /** Days until the escrows open, when the grace period has already started. */
+  daysUntilRelease: number | null;
+  /** True when the switch has already fired. Checking in cannot undo that. */
+  alreadyFired: boolean;
+}
+
+/* -------------------------------------------------------------------------- */
 /* Claim kit                                                                  */
 /* -------------------------------------------------------------------------- */
 

@@ -4,6 +4,7 @@ export * from './fy.js';
 export * from './xirr.js';
 export * from './id.js';
 export * from './auth.js';
+export * from './mail.js';
 export * from './assets.js';
 export * from './accrual.js';
 export * from './analytics.js';

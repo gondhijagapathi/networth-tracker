@@ -94,10 +94,17 @@ Bind the API to loopback and let the proxy terminate TLS:
 API_HOST=127.0.0.1
 COOKIE_SECURE=true
 CORS_ORIGIN=https://networth.example.com
+APP_BASE_URL=https://networth.example.com
 ```
 
 `COOKIE_SECURE=true` is mandatory in production and enforced at boot — the session lives in
 those cookies.
+
+`APP_BASE_URL` is what every link in an outgoing email is built from — a password-reset
+link, an invite link, a dead-man check-in link. It cannot be derived from the request that
+triggered the mail: a dead-man warning is sent by a timer with no request behind it, and
+trusting a `Host` header would let a caller decide where a reset link points. It defaults to
+the first `CORS_ORIGIN`, so setting them together is usually enough.
 
 Express is told to trust exactly one proxy hop when `API_HOST` is not loopback, so the client
 address in `X-Forwarded-For` is the proxy's idea of it rather than whatever a caller claimed.
@@ -386,6 +393,53 @@ The in-process schedules are unchanged by containerisation: the dead-man sweep, 
 refresh and the nightly backup all run inside the `api` container. A container that is not
 running at 02:00 does not take that night's backup, which is what `restart: unless-stopped`
 is for.
+
+## Email
+
+`deploy.sh install` asks whether to set this up and writes the settings for you, defaulting
+to Gmail. Skipping it there is fine — everything below is what to put in `.env` by hand
+afterwards, and `bash deploy.sh restart` picks the change up.
+
+Optional, and the app runs without it. Read what you lose first: with no `SMTP_HOST`, invite
+codes have to be delivered by hand, nobody can reset a forgotten password, and the dead-man
+switch's warnings are recorded but never sent — which matters, because the premise of that
+feature is somebody who is not opening the app. Nothing is silently dropped: every message
+is recorded in the outbox as `suppressed`, and **Administration → Email** says plainly that
+mail is off.
+
+For Gmail:
+
+```
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=you@gmail.com
+SMTP_PASS=abcd efgh ijkl mnop
+```
+
+`SMTP_PASS` must be a **16-character App Password**, not your account password — Google
+stopped accepting the latter over SMTP in May 2022, and the error it returns says only
+"Username and Password not accepted". App Passwords need 2-Step Verification on the Google
+account: *myaccount.google.com → Security → App passwords*. Google shows the password in
+four spaced groups and people paste it that way, so the spaces are stripped for you.
+
+Leave `SMTP_FROM` unset and it follows `SMTP_USER`, which is what Gmail wants anyway — it
+rewrites or refuses a `From` that is neither the authenticated account nor an alias verified
+on it, and a silently rewritten sender is a miserable thing to debug. `SMTP_SECURE` follows
+the port unless you set it: 465 is implicit TLS, 587 negotiates it with STARTTLS. STARTTLS
+is required rather than attempted, so a server that cannot offer it fails instead of sending
+your credentials in the clear.
+
+Anything speaking SMTP works the same way — Fastmail, Zoho, a relay of your own.
+
+**Check it.** Sign in as an admin, open **Administration → Email**, and press *Send test
+email*. It goes to your own address — the endpoint takes no recipient, deliberately — and if
+the server refuses it, the panel shows the refusal verbatim, which is nearly always the
+answer. The same panel lists what has been queued, what failed and why, with a retry button.
+
+Delivery never happens on the request thread. Messages go to `email_outbox`, a background
+loop sends them with exponential backoff over about two hours, and anything still failing
+after that is abandoned with an audit row. Queued bodies are encrypted at rest, because a
+pending message holds a live reset link or an unredeemed invite code.
 
 ## Backups
 

@@ -14,7 +14,10 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   ROLES,
   type CreateInviteBody,
+  type EmailRecord,
   type InviteSummary,
+  type MailStatus,
+  type MailTestResult,
   type PublicUser,
   type Role,
 } from '@networth/shared';
@@ -90,6 +93,7 @@ export function Admin() {
 
       <InvitesCard invites={invites} onChanged={() => void load()} />
       <PeopleCard users={users} currentUserId={user.id} onChanged={() => void load()} />
+      <MailCard />
     </div>
   );
 }
@@ -100,7 +104,8 @@ export function Admin() {
 
 function InvitesCard({ invites, onChanged }: { invites: InviteSummary[]; onChanged: () => void }) {
   const [issuing, setIssuing] = useState(false);
-  const [code, setCode] = useState<string | null>(null);
+  /** The one-time code, and whether the invitee was also emailed it. */
+  const [issued, setIssued] = useState<{ code: string; emailQueued: boolean } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -134,26 +139,36 @@ function InvitesCard({ invites, onChanged }: { invites: InviteSummary[]; onChang
 
       {issuing && (
         <InviteForm
-          onIssued={(issued) => {
-            setCode(issued);
+          onIssued={(result) => {
+            setIssued(result);
             setIssuing(false);
             onChanged();
           }}
         />
       )}
 
-      {code !== null && (
+      {issued !== null && (
         <div
           className="mt-3 rounded-xl p-3 text-sm"
           style={{ background: 'var(--surface-sunken)' }}
         >
           <p className="font-medium">Invite code — shown once</p>
-          <p className="mt-1 font-mono text-base tracking-wide">{code}</p>
+          <p className="mt-1 font-mono text-base tracking-wide">{issued.code}</p>
+          {/*
+            The difference between "they have it" and "you still have to send it" is the
+            whole reason this line exists. Without it an admin closes the panel assuming the
+            invitee was emailed, and the code — which cannot be shown again — is gone.
+          */}
+          <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+            {issued.emailQueued
+              ? 'Emailed to the address on the invite. Copy it anyway if you would rather read it out.'
+              : 'Not emailed — copy it now and send it yourself.'}
+          </p>
           <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
             Only its hash is stored, so this cannot be shown again. If it is lost, withdraw the
             invite and issue another.
           </p>
-          <Button className="mt-2" onClick={() => setCode(null)}>
+          <Button className="mt-2" onClick={() => setIssued(null)}>
             Done
           </Button>
         </div>
@@ -201,8 +216,16 @@ function InvitesCard({ invites, onChanged }: { invites: InviteSummary[]; onChang
   );
 }
 
-function InviteForm({ onIssued }: { onIssued: (code: string) => void }) {
-  const [form, setForm] = useState<CreateInviteBody>({ role: 'member', expiresInDays: 7 });
+function InviteForm({
+  onIssued,
+}: {
+  onIssued: (result: { code: string; emailQueued: boolean }) => void;
+}) {
+  const [form, setForm] = useState<CreateInviteBody>({
+    role: 'member',
+    expiresInDays: 7,
+    sendEmail: true,
+  });
   const [email, setEmail] = useState('');
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
@@ -218,7 +241,7 @@ function InviteForm({ onIssued }: { onIssued: (code: string) => void }) {
         ...(email.trim() === '' ? {} : { email: email.trim() }),
         ...(note.trim() === '' ? {} : { note: note.trim() }),
       });
-      onIssued(result.code);
+      onIssued({ code: result.code, emailQueued: result.emailQueued });
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Could not issue that invite.');
     } finally {
@@ -265,6 +288,26 @@ function InviteForm({ onIssued }: { onIssued: (code: string) => void }) {
       <Field label="Note" hint="For your own records — who this was for.">
         <Input value={note} onChange={(event) => setNote(event.target.value)} maxLength={200} />
       </Field>
+
+      {/*
+        Only meaningful with an address to send to, so it appears with one. An unbound
+        invite has nowhere to go and a checkbox implying otherwise would be a small lie.
+      */}
+      {email.trim() !== '' && (
+        <label className="flex items-center gap-2 text-sm sm:col-span-2">
+          <input
+            type="checkbox"
+            checked={form.sendEmail}
+            onChange={(event) => setForm({ ...form, sendEmail: event.target.checked })}
+          />
+          <span>
+            Email the code to this address
+            <span className="block text-xs" style={{ color: 'var(--text-muted)' }}>
+              Untick to read it out over the phone instead.
+            </span>
+          </span>
+        </label>
+      )}
 
       {error !== null && (
         <div className="sm:col-span-2">
@@ -449,3 +492,207 @@ function PeopleCard({
     </Card>
   );
 }
+
+/* -------------------------------------------------------------------------- */
+/* Mail                                                                       */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Whether this installation can send email, and what it has been trying to send.
+ *
+ * This card exists because of one failure mode. Mail here is optional and quiet: an
+ * instance with no SMTP configured works perfectly well until the day a dead-man switch
+ * warning needs to go out, and by then nobody is watching. Somebody has to be able to see,
+ * before that day, that the answer to "will anything I do here send an email" is no.
+ *
+ * The test button sends to the signed-in admin's own address and reports the mail server's
+ * complaint verbatim, because with Gmail the complaint is nearly always the answer — an
+ * account password where an App Password was needed.
+ */
+function MailCard() {
+  const [status, setStatus] = useState<MailStatus | null>(null);
+  const [test, setTest] = useState<MailTestResult | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      setStatus(await endpoints.mailStatus());
+      setError(null);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not load mail settings.');
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function sendTest() {
+    setBusy(true);
+    setTest(null);
+    try {
+      setTest(await endpoints.sendTestEmail());
+      await load();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Could not send a test message.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function retry(id: string) {
+    setBusy(true);
+    try {
+      setStatus(await endpoints.retryEmail(id));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'That message cannot be sent again.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (error !== null) return <ErrorNotice message={error} onRetry={() => void load()} />;
+  if (status === null) return <Skeleton className="h-48" />;
+
+  return (
+    <Card>
+      <CardTitle
+        action={
+          <Button variant="primary" disabled={busy} onClick={() => void sendTest()}>
+            Send test email
+          </Button>
+        }
+      >
+        Email
+      </CardTitle>
+
+      {status.configured ? (
+        <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+          Sending through <span className="font-mono">{status.host}</span> as{' '}
+          <span className="font-mono">{status.from}</span>. Links point at{' '}
+          <span className="font-mono">{status.appBaseUrl}</span>.
+        </p>
+      ) : (
+        <div className="rounded-xl p-3 text-sm" style={{ background: 'var(--surface-sunken)' }}>
+          <p className="font-medium" style={{ color: 'var(--color-warn)' }}>
+            No mail server is configured.
+          </p>
+          <p className="mt-1" style={{ color: 'var(--text-secondary)' }}>
+            Invites, password resets and dead-man switch warnings are recorded but not delivered. To
+            use Gmail, set <span className="font-mono">SMTP_HOST=smtp.gmail.com</span>,{' '}
+            <span className="font-mono">SMTP_PORT=587</span>,{' '}
+            <span className="font-mono">SMTP_USER</span> to your address and{' '}
+            <span className="font-mono">SMTP_PASS</span> to a sixteen-character App Password — not
+            your account password — then restart. See{' '}
+            <span className="font-mono">.env.example</span>.
+          </p>
+        </div>
+      )}
+
+      {test !== null && (
+        <div
+          className="mt-3 rounded-xl p-3 text-sm"
+          style={{ background: 'var(--surface-sunken)' }}
+        >
+          {test.ok ? (
+            <p>
+              Sent to <span className="font-mono">{test.to}</span>. If it does not arrive within a
+              minute or two, check the spam folder.
+            </p>
+          ) : (
+            <>
+              <p className="font-medium" style={{ color: 'var(--color-loss)' }}>
+                The mail server refused it.
+              </p>
+              {/* Verbatim, wrapped. Editing this into something friendlier would remove the
+                  one string that says what to change. */}
+              <p
+                className="mt-1 font-mono text-xs break-words"
+                style={{ color: 'var(--text-secondary)' }}
+              >
+                {test.error}
+              </p>
+            </>
+          )}
+        </div>
+      )}
+
+      <p className="mt-3 text-sm" style={{ color: 'var(--text-secondary)' }}>
+        {status.pending} waiting to send · {status.failed} undelivered
+      </p>
+
+      {status.recent.length === 0 ? (
+        <EmptyState
+          title="Nothing sent yet"
+          description="Messages this instance sends will be listed here."
+        />
+      ) : (
+        <ul className="mt-2 divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
+          {status.recent.map((message) => (
+            <MailRow
+              key={message.id}
+              message={message}
+              busy={busy}
+              onRetry={() => void retry(message.id)}
+            />
+          ))}
+        </ul>
+      )}
+    </Card>
+  );
+}
+
+function MailRow({
+  message,
+  busy,
+  onRetry,
+}: {
+  message: EmailRecord;
+  busy: boolean;
+  onRetry: () => void;
+}) {
+  const tone =
+    message.status === 'sent'
+      ? undefined
+      : message.status === 'pending'
+        ? 'var(--color-warn)'
+        : 'var(--color-loss)';
+
+  return (
+    <li className="flex flex-wrap items-start justify-between gap-2 py-2 text-sm">
+      <div className="min-w-0">
+        <p className="truncate font-medium">{message.subject}</p>
+        <p className="truncate text-xs" style={{ color: 'var(--text-muted)' }}>
+          {message.to} · {formatDate(message.createdAt)}
+          {message.attempts > 1 && ` · ${message.attempts} attempts`}
+        </p>
+        {message.lastError !== null && message.status !== 'sent' && (
+          <p
+            className="mt-1 font-mono text-xs break-words"
+            style={{ color: 'var(--text-secondary)' }}
+          >
+            {message.lastError}
+          </p>
+        )}
+      </div>
+
+      <div className="flex items-center gap-2">
+        <Pill tone={tone}>{STATUS_LABELS[message.status]}</Pill>
+        {message.status === 'failed' && (
+          <Button disabled={busy} onClick={onRetry}>
+            Retry
+          </Button>
+        )}
+      </div>
+    </li>
+  );
+}
+
+const STATUS_LABELS: Record<EmailRecord['status'], string> = {
+  pending: 'Waiting',
+  sent: 'Sent',
+  failed: 'Failed',
+  // Not "failed": nothing went wrong, there is simply nowhere to send it.
+  suppressed: 'Not sent',
+};

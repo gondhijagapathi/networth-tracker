@@ -150,7 +150,8 @@ export function Nominees() {
 
 function NomineeCard({ nominee, onChanged }: { nominee: NomineeRecord; onChanged: () => void }) {
   const vault = useVault();
-  const [code, setCode] = useState<string | null>(null);
+  /** The one-time code, and whether the nominee was also emailed it. */
+  const [issued, setIssued] = useState<{ code: string; emailQueued: boolean } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -210,7 +211,7 @@ function NomineeCard({ nominee, onChanged }: { nominee: NomineeRecord; onChanged
               onClick={() =>
                 void run(async () => {
                   const result = await endpoints.inviteNominee(nominee.id);
-                  setCode(result.code);
+                  setIssued({ code: result.code, emailQueued: result.emailQueued });
                 })
               }
             >
@@ -260,16 +261,18 @@ function NomineeCard({ nominee, onChanged }: { nominee: NomineeRecord; onChanged
         </div>
       </div>
 
-      {code !== null && (
+      {issued !== null && (
         <div
           className="mt-3 rounded-xl p-3 text-sm"
           style={{ background: 'var(--surface-sunken)' }}
         >
           <p className="font-medium">Invite code — shown once</p>
-          <p className="mt-1 font-mono text-base tracking-wide">{code}</p>
+          <p className="mt-1 font-mono text-base tracking-wide">{issued.code}</p>
           <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
-            Give this to {nominee.name}. It is not stored anywhere and cannot be shown again; if it
-            is lost, issue a new one.
+            {issued.emailQueued
+              ? `Emailed to ${nominee.name} with an explanation of why they are receiving it.`
+              : `Give this to ${nominee.name} yourself — this instance has no mail server configured.`}{' '}
+            It is not stored anywhere and cannot be shown again; if it is lost, issue a new one.
           </p>
         </div>
       )}

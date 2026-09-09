@@ -194,10 +194,11 @@ building the two apart would have meant shipping a keypair with nothing to wrap 
 
 Worth stating plainly about both phases:
 
-- **Warnings are recorded, not emailed.** There is no mail transport in this build, so the
-  50/75/90% stages write audit rows and raise a banner the owner sees on their next visit.
-  That is weaker than the design in PLAN.md intends. Email and push are in the backlog, and
-  saying so here is better than a checked box implying an email that never went out.
+- **Warnings are emailed, and recorded.** The 50/75/90% stages, the grace period opening and
+  the release each queue an email as well as writing an audit row and raising a banner; the
+  heirs are told separately when an escrow opens. On an instance with no `SMTP_HOST` the
+  messages are recorded as `suppressed` and the banner is all there is, which the admin
+  Email panel states rather than leaving anyone to assume otherwise.
 - **Release is one-way.** Revoking a nominee closes their grant and revokes the escrow, so
   the server will not serve the key again — but an heir who already fetched it holds a copy
   of the data key. Taking that back would mean re-encrypting every item under a new key. The
@@ -428,11 +429,35 @@ Deliberately not in this phase:
 
 ---
 
+## Notifications
+
+- [x] SMTP transport with a Gmail-first setup path: App Password handling, `SMTP_SECURE`
+      inferred from the port, STARTTLS required rather than attempted, and boot-time checks
+      for the combinations that would otherwise fail at the first send
+- [x] `email_outbox` — nothing sends on the request thread. Queued rows are delivered by a
+      background loop with exponential backoff, retried for about two hours, then abandoned
+      with an `email.failed` audit row
+- [x] Bodies sealed at rest with `SECRET_ENCRYPTION_KEY` and cleared on delivery, because a
+      pending row holds a live reset link or an unredeemed invite code
+- [x] Twelve messages: admin invite, nominee invite, household invite, welcome, password
+      reset, password changed, 2FA changed, dead-man warning / grace / fired, escrow
+      released to an heir, and the admin's test message
+- [x] Password reset end to end — no enumeration, single-use hourly links, second factor
+      still required, every session revoked, and an alert to the account afterwards
+- [x] Admin Email panel: whether mail is configured, the queue, the failures with the mail
+      server's own words, a retry button, and a test send to the admin's own address
+- [x] Suppressed rather than dropped when no transport is configured, so an operator can see
+      what their household was not told
+- [x] Emailed check-in links, so answering a dead-man warning needs no sign-in. Single use,
+      30 days, and deliberately two steps — the link opens a page and a human presses a
+      button, because mail scanners prefetch links and one answering on a dead owner's
+      behalf would stop the switch ever firing
+
 ## Backlog (post-v1)
 
 - [ ] CAS PDF import (CAMS / KFintech, NSDL / CDSL)
-- [ ] Email and push notifications — the dead-man switch's 50/75/90% warnings are recorded as
-      audit rows and raised as a banner, not sent, because this build has no mail transport
+- [ ] Push notifications. Email now exists — see "Notifications" above — but a phone that
+      buzzes is a better dead-man warning than an inbox somebody is not reading either
 - [ ] Rotating the vault's **data** key, which is the only real answer to a released escrow.
       Deferred from P5 to P8 to here: it re-encrypts every item and every document at once,
       and it wanted a backup taken first — which now exists

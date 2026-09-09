@@ -20,6 +20,12 @@ export type AuditAction =
   | 'user.login_failed'
   | 'user.logout'
   | 'user.password_changed'
+  // A reset is a password change by somebody who could not sign in, so it gets its own
+  // vocabulary: the request, the failures, and the completion are three different events,
+  // and the first of them is written even for an address with no account behind it.
+  | 'user.reset_requested'
+  | 'user.reset_failed'
+  | 'user.password_reset'
   | 'user.suspended'
   | 'user.reactivated'
   | 'user.role_changed'
@@ -30,6 +36,7 @@ export type AuditAction =
   | 'invite.consumed'
   | 'invite.revoked'
   | 'invite.rejected'
+  | 'invite.emailed'
   | 'totp.enabled'
   | 'totp.disabled'
   | 'totp.recovery_code_used'
@@ -72,6 +79,7 @@ export type AuditAction =
   | 'escrow.read'
   | 'deadman.configured'
   | 'deadman.checkin'
+  | 'deadman.checkin_emailed'
   | 'deadman.warned'
   | 'deadman.grace_started'
   | 'deadman.cancelled'
@@ -83,7 +91,12 @@ export type AuditAction =
   | 'backup.created'
   | 'backup.deleted'
   | 'backup.restored'
-  | 'export.generated';
+  | 'export.generated'
+  // Mail is the only thing this application sends outside the machine. A message it gave up
+  // on is somebody who was not told something — a dead-man warning, a released escrow — and
+  // that non-event deserves a row as much as any of the events above.
+  | 'email.failed'
+  | 'email.test';
 
 export interface AuditEntry {
   actorUserId?: string | null;

@@ -37,8 +37,10 @@ import {
   type HouseholdRow,
 } from '../db/schema.js';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
+import { householdInviteEmail } from '../lib/mailTemplates.js';
 import { isoNow } from '../lib/time.js';
 import { recordAudit } from './audit.service.js';
+import { queueEmail } from './mail.service.js';
 
 /* -------------------------------------------------------------------------- */
 /* Reads                                                                      */
@@ -133,11 +135,11 @@ export function invitePartner(
   body: InvitePartnerBody,
   ip: string | null,
 ): HouseholdMemberRecord {
-  requireHousehold(ctx, householdId);
+  const household = requireHousehold(ctx, householdId);
   assertMember(ctx, householdId, userId);
 
   const invitee = ctx.db
-    .select({ id: users.id, email: users.email })
+    .select({ id: users.id, email: users.email, name: users.name })
     .from(users)
     .where(eq(users.email, body.email))
     .get();
@@ -169,6 +171,23 @@ export function invitePartner(
     ip,
     meta: { granteeUserId: invitee.id },
   });
+
+  // A pending membership shows up on the Household screen, but nothing takes anybody there
+  // — an invitation that waits for the invitee to happen to look is not an invitation.
+  const inviter = ctx.db.select({ name: users.name }).from(users).where(eq(users.id, userId)).get();
+  queueEmail(
+    ctx,
+    invitee.email,
+    householdInviteEmail(
+      { baseUrl: ctx.config.appBaseUrl },
+      {
+        inviterName: inviter?.name ?? 'Someone',
+        householdName: household.name,
+        recipientName: invitee.name,
+      },
+    ),
+    { userId: invitee.id },
+  );
 
   return toMemberRecord(ctx, row);
 }

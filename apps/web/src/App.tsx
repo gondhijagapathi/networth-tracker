@@ -26,12 +26,29 @@ import { Performance } from './routes/Performance.js';
 import { Planner } from './routes/Planner.js';
 import { Settings } from './routes/Settings.js';
 import { Vault } from './routes/Vault.js';
+import { CheckIn } from './routes/CheckIn.js';
+import { ForgotPassword } from './routes/ForgotPassword.js';
+import { ResetPassword } from './routes/ResetPassword.js';
 import { SignIn } from './routes/SignIn.js';
 
 export function App() {
   return (
     <Routes>
       <Route path="/sign-in" element={<SignIn />} />
+      {/*
+        Public, and outside `RequireSession` for the obvious reason: somebody who could
+        satisfy it would not be here. They are also outside `AppShell` — a navigation bar
+        full of links to screens you cannot open is not reassuring on the page where you are
+        already having trouble getting in.
+      */}
+      <Route path="/forgot-password" element={<ForgotPassword />} />
+      <Route path="/reset-password" element={<ResetPassword />} />
+      {/*
+        Public for the reason the whole feature exists: the person following this link has
+        not opened the app in months, and a sign-in wall is what would make them put it off
+        again. The token can only reset their own dead-man clock.
+      */}
+      <Route path="/check-in" element={<CheckIn />} />
       <Route
         path="*"
         element={

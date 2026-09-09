@@ -66,6 +66,7 @@ export function requireAuth(ctx: AppContext): RequestHandler {
             name: users.name,
             role: users.role,
             status: users.status,
+            sessionEpoch: users.sessionEpoch,
           })
           .from(users)
           .where(eq(users.id, claims.sub))
@@ -75,6 +76,10 @@ export function requireAuth(ctx: AppContext): RequestHandler {
         if (user.status !== 'active') {
           throw forbidden('This account has been suspended. Contact your administrator.');
         }
+        // The token names the epoch it was minted under. A wholesale revocation — password
+        // change, reset, admin lockout — bumps the counter, and every token issued before
+        // it stops working on the very next request rather than in fifteen minutes' time.
+        if (claims.ep !== user.sessionEpoch) throw unauthenticated('Your session has expired');
 
         req.auth = {
           userId: user.id,

@@ -37,9 +37,12 @@ import {
   totpUri,
   verifyTotp,
 } from '../lib/totp.js';
+import { passwordChangedEmail, twoFactorChangedEmail, welcomeEmail } from '../lib/mailTemplates.js';
 import { recordAudit } from './audit.service.js';
 import { findRedeemableInvite, markInviteConsumed } from './invite.service.js';
+import { queueEmail } from './mail.service.js';
 import { linkNomineeAccounts } from './nominee.service.js';
+import { invalidateOutstanding } from './passwordReset.service.js';
 import { issueSession, revokeAllSessions, type IssuedSession } from './session.service.js';
 
 export interface AuthResult {
@@ -121,6 +124,18 @@ export async function register(
     ip,
   });
 
+  // Queued after the transaction, not inside it. A welcome message for an account that
+  // then failed to commit would be the one email this application must never send.
+  queueEmail(
+    ctx,
+    user.email,
+    welcomeEmail(
+      { baseUrl: ctx.config.appBaseUrl },
+      { name: user.name, email: user.email, role: invite.role },
+    ),
+    { userId: user.id },
+  );
+
   const session = await issueSession(
     ctx,
     { id: user.id, role: invite.role },
@@ -179,7 +194,7 @@ export async function login(
       // A distinct code, not a failure: the client uses it to show the second-factor field.
       throw new ApiError('totp_required', 'Enter the code from your authenticator app');
     }
-    const accepted = consumeSecondFactor(ctx, user, body.totp, ip);
+    const accepted = verifySecondFactor(ctx, user, body.totp, ip);
     if (!accepted) {
       return failLogin(ctx, emailKey, ipKey, ip, body.email, 'bad_totp', user.id);
     }
@@ -238,8 +253,12 @@ function failLogin(
  *
  * Recovery codes are marked used the moment they match, inside the same statement that
  * finds them, so the same printed code cannot be replayed.
+ *
+ * Exported because a password reset needs exactly this check and must not reimplement it.
+ * An account with a second factor has to present one there too — otherwise control of a
+ * mailbox would walk straight past 2FA, and enrolling in it would protect nothing.
  */
-function consumeSecondFactor(
+export function verifySecondFactor(
   ctx: AppContext,
   user: UserRow,
   presented: string,
@@ -313,6 +332,9 @@ export async function changePassword(
   // Including the caller's own session. A password change is the response to "someone may
   // have my credentials", so every device is signed out and must prove the new one.
   revokeAllSessions(ctx, userId);
+  // And any reset link asked for before this moment. Somebody changing their password
+  // because they are worried is closing exactly that window.
+  invalidateOutstanding(ctx, userId);
 
   recordAudit(ctx, {
     actorUserId: userId,
@@ -321,6 +343,16 @@ export async function changePassword(
     entityId: userId,
     ip,
   });
+
+  queueEmail(
+    ctx,
+    user.email,
+    passwordChangedEmail(
+      { baseUrl: ctx.config.appBaseUrl },
+      { name: user.name, at: now, ip, viaReset: false },
+    ),
+    { userId },
+  );
 }
 
 /* -------------------------------------------------------------------------- */
@@ -411,6 +443,16 @@ export function confirmTotpEnrolment(
     ip,
   });
 
+  queueEmail(
+    ctx,
+    user.email,
+    twoFactorChangedEmail(
+      { baseUrl: ctx.config.appBaseUrl },
+      { name: user.name, enabled: true, at: now, ip },
+    ),
+    { userId },
+  );
+
   return codes;
 }
 
@@ -429,7 +471,7 @@ export async function disableTotp(
   if (!(await verifyPassword(password, user.passwordHash))) {
     throw badRequest('Password is incorrect', { password: ['Password is incorrect'] });
   }
-  if (!consumeSecondFactor(ctx, user, code, ip)) {
+  if (!verifySecondFactor(ctx, user, code, ip)) {
     throw badRequest('That code is not valid', { code: ['That code is not valid'] });
   }
 
@@ -448,6 +490,18 @@ export async function disableTotp(
     entityId: userId,
     ip,
   });
+
+  // The message this pair of templates exists for. Somebody who did not do this needs to
+  // hear about it, because stripping the second factor is step one of taking an account.
+  queueEmail(
+    ctx,
+    user.email,
+    twoFactorChangedEmail(
+      { baseUrl: ctx.config.appBaseUrl },
+      { name: user.name, enabled: false, at: isoNow(ctx.now()), ip },
+    ),
+    { userId },
+  );
 }
 
 /** How many single-use recovery codes the user has left. Surfaced in account settings. */

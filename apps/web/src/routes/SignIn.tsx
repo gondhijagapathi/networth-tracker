@@ -8,7 +8,7 @@
  */
 
 import { useState, type FormEvent } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Link, Navigate, useSearchParams } from 'react-router-dom';
 import { ApiError } from '../lib/api.js';
 import { useSession } from '../lib/session.js';
 import { Button, Field, Input } from '../components/ui.js';
@@ -17,6 +17,15 @@ type Mode = 'sign-in' | 'register';
 
 export function SignIn() {
   const { status, bootstrapRequired, login, register } = useSession();
+  /**
+   * An invite code carried in from the emailed link (`/sign-in?invite=…`).
+   *
+   * The code in the mail is twenty characters in four groups, and it is retyped on a phone
+   * by somebody who has never used this application. Filling it in for them costs nothing
+   * and removes the only genuinely fiddly step in registering.
+   */
+  const [params] = useSearchParams();
+  const invitedCode = params.get('invite');
   /**
    * Which form to show, and why it is derived rather than initialised.
    *
@@ -30,7 +39,9 @@ export function SignIn() {
    * server's answer whenever they have not picked anything.
    */
   const [chosen, setChosen] = useState<Mode | null>(null);
-  const mode: Mode = chosen ?? (bootstrapRequired ? 'register' : 'sign-in');
+  // An arriving invite code is as strong a signal as the bootstrap flag: whoever followed
+  // that link has no account yet, whatever else is true of the instance.
+  const mode: Mode = chosen ?? (bootstrapRequired || invitedCode !== null ? 'register' : 'sign-in');
   const [error, setError] = useState<ApiError | null>(null);
   const [busy, setBusy] = useState(false);
   /** The server answers `totp_required` rather than failing, so the field appears on demand. */
@@ -86,7 +97,13 @@ export function SignIn() {
       <form onSubmit={(event) => void submit(event)} className="surface-card space-y-4 p-5">
         {registering && (
           <Field label="Invite code" error={error?.fieldError('inviteCode')}>
-            <Input name="inviteCode" required autoComplete="off" spellCheck={false} />
+            <Input
+              name="inviteCode"
+              required
+              autoComplete="off"
+              spellCheck={false}
+              defaultValue={invitedCode ?? ''}
+            />
           </Field>
         )}
 
@@ -133,18 +150,30 @@ export function SignIn() {
         </Button>
       </form>
 
-      <button
-        type="button"
-        className="mt-4 self-center text-sm underline underline-offset-4"
-        style={{ color: 'var(--text-secondary)' }}
-        onClick={() => {
-          setChosen(registering ? 'sign-in' : 'register');
-          setError(null);
-          setTotpRequired(false);
-        }}
-      >
-        {registering ? 'I already have an account' : 'I have an invite code'}
-      </button>
+      <div className="mt-4 flex flex-col items-center gap-2">
+        <button
+          type="button"
+          className="text-sm underline underline-offset-4"
+          style={{ color: 'var(--text-secondary)' }}
+          onClick={() => {
+            setChosen(registering ? 'sign-in' : 'register');
+            setError(null);
+            setTotpRequired(false);
+          }}
+        >
+          {registering ? 'I already have an account' : 'I have an invite code'}
+        </button>
+
+        {!registering && (
+          <Link
+            to="/forgot-password"
+            className="text-sm underline underline-offset-4"
+            style={{ color: 'var(--text-secondary)' }}
+          >
+            Forgotten your password?
+          </Link>
+        )}
+      </div>
     </div>
   );
 }

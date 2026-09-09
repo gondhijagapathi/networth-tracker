@@ -172,7 +172,7 @@ Tracked as checkboxes in `docs/TASKS.md`, kept current as work lands.
 | **P9** | India extras: FY reports, tax estimates, maturity calendar, nomination hygiene dashboard |
 | **P10** | Polish: PWA, privacy blur, a11y pass, Playwright E2E, docs, v1.0.0 release |
 
-Backlog (post-v1): CAS PDF import, email/push notifications, goal tracking, multi-currency for NRI/RSU holdings, mobile app shell.
+Backlog (post-v1): CAS PDF import, push notifications, goal tracking, multi-currency for NRI/RSU holdings, mobile app shell.
 
 ---
 

@@ -55,7 +55,12 @@ import type {
   UpdateShareModeBody,
   UpdateUserBody,
   ExportDataset,
+  ForgotPasswordBody,
   FinancialYearQuery,
+  MailStatus,
+  MailTestResult,
+  ResetPasswordBody,
+  ResetTokenCheck,
   FinancialYearReport,
   NominationReport,
   RestoreResult,
@@ -213,7 +218,9 @@ export const endpoints = {
   revokeNominee: (id: string) => api.delete<{ nominee: NomineeRecord }>(`/nominees/${id}`),
 
   inviteNominee: (id: string) =>
-    api.post<{ nominee: NomineeRecord; code: string }>(`/nominees/${id}/invite`),
+    api.post<{ nominee: NomineeRecord; code: string; emailQueued: boolean }>(
+      `/nominees/${id}/invite`,
+    ),
 
   nomineePublicKey: (id: string) =>
     api.get<{ publicKeyJwk: PublicKeyJwk }>(`/nominees/${id}/public-key`),
@@ -269,11 +276,43 @@ export const endpoints = {
   adminInvites: (signal?: AbortSignal) =>
     api.get<{ invites: InviteSummary[] }>('/admin/invites', signal),
 
-  /** The code comes back exactly once; it is stored only as a hash. */
+  /**
+   * The code comes back exactly once; it is stored only as a hash. `emailQueued` says
+   * whether the invitee was also told, which decides whether the admin still has to deliver
+   * the code by hand.
+   */
   createInvite: (body: CreateInviteBody) =>
-    api.post<{ invite: InviteSummary; code: string }>('/admin/invites', body),
+    api.post<{ invite: InviteSummary; code: string; emailQueued: boolean }>('/admin/invites', body),
 
   revokeInvite: (id: string) => api.delete<void>(`/admin/invites/${id}`),
+
+  /* ---------------------------------------------------------------------- */
+  /* Mail                                                                   */
+  /* ---------------------------------------------------------------------- */
+
+  mailStatus: (signal?: AbortSignal) => api.get<MailStatus>('/admin/mail', signal),
+
+  /** Goes to the caller's own address. The endpoint takes no recipient. */
+  sendTestEmail: () => api.post<MailTestResult>('/admin/mail/test'),
+
+  retryEmail: (id: string) => api.post<MailStatus>(`/admin/mail/${id}/retry`),
+
+  /* ---------------------------------------------------------------------- */
+  /* Password reset                                                         */
+  /* ---------------------------------------------------------------------- */
+
+  /**
+   * These three are the only calls in this file made by somebody who is not signed in.
+   *
+   * `forgotPassword` resolves the same way whether or not the address has an account —
+   * the server will not say, and the screen must not imply otherwise.
+   */
+  forgotPassword: (body: ForgotPasswordBody) => api.post<void>('/auth/forgot-password', body),
+
+  checkResetToken: (token: string, signal?: AbortSignal) =>
+    api.get<ResetTokenCheck>(`/auth/reset-password${query({ token })}`, signal),
+
+  resetPassword: (body: ResetPasswordBody) => api.post<void>('/auth/reset-password', body),
 
   /* ---------------------------------------------------------------------- */
   /* India                                                                  */

@@ -16,8 +16,10 @@ import { uuidv7, type CreateInviteBody, type InviteSummary, type Role } from '@n
 import type { AppContext } from '../context.js';
 import { invites, users, type InviteRow } from '../db/schema.js';
 import { badRequest, conflict, notFound } from '../lib/errors.js';
+import { inviteEmail, nomineeInviteEmail } from '../lib/mailTemplates.js';
 import { isoIn, isoNow } from '../lib/time.js';
 import { recordAudit } from './audit.service.js';
+import { queueEmail } from './mail.service.js';
 
 /** Crockford-ish: no `I`, `L`, `O`, `U` — these are read aloud and typed by hand. */
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTVWXYZ23456789';
@@ -56,12 +58,33 @@ export interface CreatedInvite {
   invite: InviteSummary;
   /** Plaintext, returned exactly once. It is not stored and cannot be shown again. */
   code: string;
+  /**
+   * Whether the code was also mailed to the invitee.
+   *
+   * False when the invite is unbound, when the admin unticked it, or when this instance has
+   * no mail transport. The admin screen shows the code either way and says which happened —
+   * an invite that was silently not delivered is how somebody ends up waiting a week for an
+   * email that was never going to arrive.
+   */
+  emailQueued: boolean;
+}
+
+/** How an invite is worded when it is mailed. Nominee invites need to explain themselves. */
+export interface InviteMailContext {
+  kind: 'admin' | 'nominee';
+  /** The person issuing it, for an admin invite. */
+  invitedBy?: string | null;
+  /** The owner and the heir's own name, for a nominee invite. */
+  ownerName?: string;
+  nomineeName?: string;
+  accessLevel?: string;
 }
 
 export function createInvite(
   ctx: AppContext,
   actorUserId: string,
   body: CreateInviteBody,
+  mail: InviteMailContext = { kind: 'admin' },
 ): CreatedInvite {
   const now = ctx.now();
   const code = generateInviteCode();
@@ -96,10 +119,56 @@ export function createInvite(
     meta: { role: body.role, boundToEmail: Boolean(body.email) },
   });
 
+  const emailQueued =
+    body.email !== undefined && body.sendEmail
+      ? queueEmail(ctx, body.email, renderInvite(ctx, mail, code, body, row.expiresAt), {
+          userId: null,
+        }) !== null
+      : false;
+
+  if (emailQueued) {
+    recordAudit(ctx, {
+      actorUserId,
+      action: 'invite.emailed',
+      entityType: 'invite',
+      entityId: row.id,
+      meta: { kind: mail.kind },
+    });
+  }
+
   return {
     invite: toSummary({ ...row, consumedAt: null, consumedByUserId: null } as InviteRow),
     code,
+    emailQueued,
   };
+}
+
+function renderInvite(
+  ctx: AppContext,
+  mail: InviteMailContext,
+  code: string,
+  body: CreateInviteBody,
+  expiresAt: string,
+) {
+  const base = { baseUrl: ctx.config.appBaseUrl };
+
+  if (mail.kind === 'nominee') {
+    return nomineeInviteEmail(base, {
+      code,
+      ownerName: mail.ownerName ?? 'Somebody',
+      nomineeName: mail.nomineeName ?? 'Hello',
+      expiresAt,
+      accessLevel: mail.accessLevel ?? 'summary',
+    });
+  }
+
+  return inviteEmail(base, {
+    code,
+    role: body.role,
+    expiresAt,
+    invitedBy: mail.invitedBy ?? null,
+    note: body.note ?? null,
+  });
 }
 
 /**

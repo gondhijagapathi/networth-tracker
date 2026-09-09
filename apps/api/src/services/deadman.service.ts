@@ -16,22 +16,50 @@
  *   - **Aliveness is authentication, not a button.** The clock reads the later of
  *     `users.last_active_at` and an explicit check-in, so somebody who uses the app normally
  *     never has to think about this feature at all.
- *   - **Warnings are recorded, not delivered.** This app has no mail transport yet — email
- *     and push are in the backlog — so a stage change writes an audit row and raises a
- *     banner the owner sees on their next visit. That is honest but weaker than the design
- *     intends, and `docs/TASKS.md` says so rather than letting a checked box imply an email
- *     that never went out.
+ *   - **Warnings are delivered, and also recorded.** Each stage change queues an email to
+ *     the owner and writes an audit row, and the app raises a banner they see on their next
+ *     visit. The email is the part that matters: this feature's whole premise is somebody
+ *     who is not opening the app, so a warning that only exists inside the app is a warning
+ *     nobody reads. On an instance with no SMTP configured the message is recorded as
+ *     `suppressed` in the outbox and the banner is all there is — which the admin screen
+ *     says out loud rather than leaving the operator to assume otherwise.
  */
 
+import { createHmac, randomBytes } from 'node:crypto';
 import { and, eq, ne } from 'drizzle-orm';
-import type { ConfigureDeadManBody, DeadManStage, DeadManStatus } from '@networth/shared';
+import {
+  uuidv7,
+  type CheckInPrompt,
+  type ConfigureDeadManBody,
+  type DeadManStage,
+  type DeadManStatus,
+} from '@networth/shared';
 import type { AppContext } from '../context.js';
-import { deadManSwitch, users, type DeadManSwitchRow } from '../db/schema.js';
-import { isoNow } from '../lib/time.js';
+import {
+  deadManCheckins,
+  deadManSwitch,
+  users,
+  type DeadManCheckinRow,
+  type DeadManSwitchRow,
+} from '../db/schema.js';
+import { deadManFiredEmail, deadManGraceEmail, deadManWarningEmail } from '../lib/mailTemplates.js';
+import { badRequest } from '../lib/errors.js';
+import { isoIn, isoNow } from '../lib/time.js';
 import { recordAudit } from './audit.service.js';
+import { queueEmail } from './mail.service.js';
 import { releaseEscrow, sealedEscrows } from './nominee.service.js';
 
 const DAY_MS = 86_400_000;
+
+/**
+ * How long an emailed check-in link stays good.
+ *
+ * Thirty days, which is longer than the gap between any warning and the stage after it for
+ * the shortest window the schema permits, and short enough that a link left in an inbox
+ * goes stale rather than accumulating. Every warning carries a freshly issued one, so a
+ * person who ignores three emails and acts on the fourth is still fine.
+ */
+const CHECKIN_TOKEN_TTL_SECONDS = 30 * 86_400;
 
 /** The fractions of the window at which the owner is warned, latest first. */
 const WARNING_STAGES: Array<{ at: number; stage: DeadManStage }> = [
@@ -167,6 +195,146 @@ export function checkIn(
 }
 
 /* -------------------------------------------------------------------------- */
+/* Checking in from an email                                                  */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Mint a link that says "I am still here" without signing anybody in.
+ *
+ * This exists because the feature's own premise undermines it. The switch measures people
+ * who have stopped opening the app; telling those people to open the app is asking for the
+ * behaviour whose absence is the whole signal. So the warning carries the answer with it.
+ *
+ * What the token can do is exactly one thing: reset this user's clock. It reads nothing,
+ * grants no session, and is useless for anything else — which is what makes it reasonable
+ * to put in an email at all.
+ */
+export function issueCheckInToken(ctx: AppContext, userId: string, stage: DeadManStage): string {
+  const now = ctx.now();
+  const token = randomBytes(32).toString('base64url');
+
+  ctx.db
+    .insert(deadManCheckins)
+    .values({
+      id: uuidv7(now.getTime()),
+      userId,
+      tokenHash: hashCheckInToken(token, ctx.config.SECRET_ENCRYPTION_KEY),
+      stage,
+      expiresAt: isoIn(CHECKIN_TOKEN_TTL_SECONDS, now),
+      usedAt: null,
+      createdAt: isoNow(now),
+    })
+    .run();
+
+  return token;
+}
+
+/**
+ * What the check-in page shows before anybody presses anything.
+ *
+ * Read-only, and that is not a detail — it is the reason this endpoint is separate from the
+ * one below. See {@link consumeCheckInToken}.
+ */
+export function describeCheckInToken(ctx: AppContext, token: string): CheckInPrompt {
+  const found = liveCheckIn(ctx, token);
+  if (!found) {
+    return { valid: false, name: null, stage: null, daysUntilRelease: null, alreadyFired: false };
+  }
+
+  const status = deadManStatus(ctx, found.row.userId);
+  return {
+    valid: true,
+    name: found.name,
+    stage: status.stage,
+    daysUntilRelease: status.daysUntilRelease,
+    alreadyFired: status.firedAt !== null,
+  };
+}
+
+/**
+ * Spend the token and reset the clock.
+ *
+ * **This is deliberately not what following the link does.** Mail providers and corporate
+ * security appliances fetch every URL in a message before a human sees it — Gmail does it,
+ * Outlook's Safe Links does it, and so does every antivirus gateway in between. If arriving
+ * at the link were enough, a scanner would check the owner in on the morning of each
+ * warning, the switch would never advance, and the escrows would never release. The feature
+ * would fail in the one direction it must not: silently, and only for somebody who has died.
+ *
+ * So the link opens a page and a person presses a button, which is this. A prefetcher
+ * issues the GET and stops there. It is the same reasoning that makes fetching an escrowed
+ * key a POST, and it is worth more here, because nobody is left to notice the mistake.
+ */
+export function consumeCheckInToken(
+  ctx: AppContext,
+  token: string,
+  ip: string | null,
+): DeadManStatus {
+  const found = liveCheckIn(ctx, token);
+  if (!found) {
+    throw badRequest(
+      'That check-in link is no longer valid. Links expire after 30 days and work once — ' +
+        'sign in instead, which resets the clock just the same.',
+    );
+  }
+
+  ctx.db
+    .update(deadManCheckins)
+    .set({ usedAt: isoNow(ctx.now()) })
+    .where(eq(deadManCheckins.id, found.row.id))
+    .run();
+
+  // Recorded as its own action. "They answered the email" and "they signed in" are both
+  // evidence of a living owner, but only one of them says the warning did its job.
+  recordAudit(ctx, {
+    actorUserId: found.row.userId,
+    action: 'deadman.checkin_emailed',
+    entityType: 'dead_man_switch',
+    entityId: found.row.userId,
+    ip,
+    meta: { stage: found.row.stage },
+  });
+
+  return checkIn(ctx, found.row.userId, ip);
+}
+
+/** The row and the owner's name, if this token is real, unused, unexpired and usable. */
+function liveCheckIn(
+  ctx: AppContext,
+  token: string,
+): { row: DeadManCheckinRow; name: string } | null {
+  const row = ctx.db
+    .select()
+    .from(deadManCheckins)
+    .where(eq(deadManCheckins.tokenHash, hashCheckInToken(token, ctx.config.SECRET_ENCRYPTION_KEY)))
+    .get();
+
+  if (!row) return null;
+  if (row.usedAt !== null) return null;
+  if (Date.parse(row.expiresAt) <= ctx.now().getTime()) return null;
+
+  const user = ctx.db
+    .select({ name: users.name, status: users.status })
+    .from(users)
+    .where(eq(users.id, row.userId))
+    .get();
+
+  // A suspended account's switch is not something to keep alive from an inbox.
+  if (!user || user.status !== 'active') return null;
+
+  return { row, name: user.name };
+}
+
+/**
+ * An HMAC rather than a bare hash, for the reason refresh and reset tokens use one:
+ * somebody holding a copy of `networth.db` should not be able to test candidate tokens
+ * offline without also holding the environment secret.
+ */
+function hashCheckInToken(token: string, secret: string): string {
+  return createHmac('sha256', secret).update(token).digest('base64url');
+}
+
+/* -------------------------------------------------------------------------- */
 /* The sweep                                                                  */
 /* -------------------------------------------------------------------------- */
 
@@ -208,6 +376,17 @@ export function evaluateDeadManSwitches(ctx: AppContext): SweepResult {
           entityId: row.userId,
           meta: { graceDays: row.graceDays },
         });
+        notify(ctx, row.userId, 'grace', (owner, checkInToken) =>
+          deadManGraceEmail(
+            { baseUrl: ctx.config.appBaseUrl },
+            {
+              name: owner.name,
+              graceDays: row.graceDays,
+              sealedEscrowCount: sealedEscrows(ctx, row.userId).length,
+              checkInToken,
+            },
+          ),
+        );
         result.graced.push(row.userId);
         continue;
       }
@@ -231,13 +410,29 @@ export function evaluateDeadManSwitches(ctx: AppContext): SweepResult {
     setStage(ctx, row, target, { graceStartedAt: null });
 
     if (isEscalation(row.stage, target)) {
+      const daysSilent = Math.floor(silentMs / DAY_MS);
       recordAudit(ctx, {
         actorUserId: null,
         action: 'deadman.warned',
         entityType: 'dead_man_switch',
         entityId: row.userId,
-        meta: { stage: target, daysSilent: Math.floor(silentMs / DAY_MS) },
+        meta: { stage: target, daysSilent },
       });
+      // Only on the way up. Stepping back down to `idle` because the owner signed in needs
+      // no email — they are, by the evidence, reading their screen rather than their inbox.
+      notify(ctx, row.userId, target, (owner, checkInToken) =>
+        deadManWarningEmail(
+          { baseUrl: ctx.config.appBaseUrl },
+          {
+            name: owner.name,
+            percent: Math.round((due?.at ?? 0) * 100),
+            daysSilent,
+            daysUntilGrace: Math.max(0, Math.ceil((windowMs - silentMs) / DAY_MS)),
+            sealedEscrowCount: sealedEscrows(ctx, row.userId).length,
+            checkInToken,
+          },
+        ),
+      );
       result.warned.push(row.userId);
     } else {
       recordAudit(ctx, {
@@ -275,6 +470,53 @@ function fire(ctx: AppContext, row: DeadManSwitchRow): void {
     entityId: row.userId,
     meta: { released: escrows.length, inactivityDays: row.inactivityDays },
   });
+
+  // The heirs were told by `releaseEscrow`, one message each. This one is the owner's, and
+  // it is sent even though the premise of the feature is that they are not reading it: the
+  // premise is a guess, and the cost of being wrong about it in this direction is that
+  // somebody who was merely on a long trip finds out what happened while they were away.
+  // No check-in link on this one. The escrows are open; a button promising to stop it would
+  // be a lie, and the honest next step is to sign in and see what was released.
+  notify(ctx, row.userId, null, (owner) =>
+    deadManFiredEmail(
+      { baseUrl: ctx.config.appBaseUrl },
+      { name: owner.name, released: escrows.length, inactivityDays: row.inactivityDays },
+    ),
+  );
+}
+
+/**
+ * Queue a message to the switch's owner.
+ *
+ * Wrapped because this runs inside the sweep, which runs on a timer with nobody watching.
+ * A stage change that has already been written must not be undone — or worse, retried on
+ * the next tick and written twice — because composing an email threw.
+ */
+function notify(
+  ctx: AppContext,
+  userId: string,
+  /** The stage to mint a check-in link for, or null for a message that carries none. */
+  checkInStage: DeadManStage | null,
+  compose: (
+    owner: { name: string; email: string },
+    checkInToken: string,
+  ) => Parameters<typeof queueEmail>[2],
+): void {
+  try {
+    const owner = ctx.db
+      .select({ name: users.name, email: users.email })
+      .from(users)
+      .where(eq(users.id, userId))
+      .get();
+    if (!owner) return;
+    // Minted per message, so the link in the most recent warning is always live even if the
+    // person let the previous three go by — and not minted at all for a message that has no
+    // link to put it in, which would otherwise leave a live token nobody was ever sent.
+    const token = checkInStage === null ? '' : issueCheckInToken(ctx, userId, checkInStage);
+    queueEmail(ctx, owner.email, compose(owner, token), { userId, immediate: false });
+  } catch {
+    // See the doc comment. The stage change stands.
+  }
 }
 
 /* -------------------------------------------------------------------------- */

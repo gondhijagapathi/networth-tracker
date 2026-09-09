@@ -9,7 +9,14 @@
 import type Database from 'better-sqlite3';
 import type { Config } from './config.js';
 import type { Db } from './db/client.js';
-import { INVITE_POLICY, LOGIN_POLICY, RateLimiter, VAULT_POLICY } from './lib/rateLimit.js';
+import { createMailer, type Mailer } from './lib/mailer.js';
+import {
+  INVITE_POLICY,
+  LOGIN_POLICY,
+  RateLimiter,
+  RESET_POLICY,
+  VAULT_POLICY,
+} from './lib/rateLimit.js';
 
 export interface AppContext {
   config: Config;
@@ -21,6 +28,14 @@ export interface AppContext {
   inviteLimiter: RateLimiter;
   /** Backoff on repeated retrieval of vault key material, keyed by user. */
   vaultLimiter: RateLimiter;
+  /** Backoff on password-reset requests, keyed by email and by client address. */
+  resetLimiter: RateLimiter;
+  /**
+   * Outbound mail. Always present — an instance with no SMTP configured gets a transport
+   * that reports `enabled === false`, so no caller has to ask whether mail exists before
+   * queueing a message.
+   */
+  mailer: Mailer;
   /** Injectable clock. Tests advance it; production reads the wall clock. */
   now: () => Date;
 }
@@ -29,7 +44,7 @@ export function createContext(
   config: Config,
   db: Db,
   sqlite: Database.Database,
-  overrides: Partial<Pick<AppContext, 'now'>> = {},
+  overrides: Partial<Pick<AppContext, 'now' | 'mailer'>> = {},
 ): AppContext {
   const now = overrides.now ?? (() => new Date());
   const clockMs = () => now().getTime();
@@ -41,6 +56,8 @@ export function createContext(
     loginLimiter: new RateLimiter(LOGIN_POLICY, clockMs),
     inviteLimiter: new RateLimiter(INVITE_POLICY, clockMs),
     vaultLimiter: new RateLimiter(VAULT_POLICY, clockMs),
+    resetLimiter: new RateLimiter(RESET_POLICY, clockMs),
+    mailer: overrides.mailer ?? createMailer(config.mail),
     now,
   };
 }
