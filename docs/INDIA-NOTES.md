@@ -83,7 +83,27 @@ the nomination dashboard exists to help households avoid.
 - **Section 80D**: health insurance premium, with a higher limit for senior-citizen parents.
 
 Rates and thresholds are kept in one configuration module per FY so a Budget change is a
-data edit rather than a code change.
+data edit rather than a code change: `TAX_RATES` in
+[`packages/shared/src/india.ts`](../packages/shared/src/india.ts) is a list keyed by the April
+each set took effect in. A financial year with no entry of its own uses the most recent
+earlier one, and **the response says that it did** — so the months after a Budget nobody has
+encoded yet show figures visibly labelled as last year's rather than silently wrong ones.
+
+The table deliberately starts at FY 2024-25, the year the Budget of July 2024 reset the
+capital-gains regime. Earlier years are absent rather than guessed at: this application was
+written after that change, and a table claiming to know FY 2019-20's rules would be inventing
+them.
+
+Two consequences worth stating, because both are places a reasonable person would expect a
+different answer:
+
+- **Interest is not a capital gain.** Deposits, EPF, PPF and insurance are excluded from the
+  gains report entirely and appear in the interest section instead, so the same rupee is
+  never taxed twice on one screen. PPF and SSY interest is listed there but excluded from the
+  taxable total, because section 10 exempts it.
+- **A slab rate is reported as unknown, not as zero.** Short-term gains on anything but
+  equity, and debt fund gains since April 2023, are added to income at a rate this
+  application has never been told. Those buckets show the gain and no tax figure at all.
 
 ## Number formatting
 
