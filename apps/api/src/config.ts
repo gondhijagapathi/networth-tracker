@@ -28,7 +28,18 @@ const schema = z.object({
   SECRET_ENCRYPTION_KEY: z.string().min(32, 'SECRET_ENCRYPTION_KEY must be at least 32 characters'),
   ACCESS_TOKEN_TTL: z.string().default('15m'),
   REFRESH_TOKEN_TTL: z.string().default('30d'),
-  COOKIE_SECURE: z.coerce.boolean().default(false),
+  /**
+   * Parsed as a word, not coerced. `z.coerce.boolean()` is `Boolean(value)`, under which
+   * the string `'false'` is `true` — so the literal line in `.env.example` would have
+   * turned the flag on, and the production guard below could never have fired. An
+   * unrecognised value is a boot-time error rather than a guess, because both guesses are
+   * wrong: `true` breaks a plain-HTTP install with silently dropped cookies, and `false`
+   * ships a session cookie without the `Secure` flag.
+   */
+  COOKIE_SECURE: z
+    .enum(['true', 'false'], { message: "COOKIE_SECURE must be exactly 'true' or 'false'" })
+    .default('false')
+    .transform((value) => value === 'true'),
 
   BOOTSTRAP_INVITE_CODE: z.string().min(8).optional(),
 

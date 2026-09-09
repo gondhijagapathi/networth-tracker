@@ -108,8 +108,54 @@ a reverse proxy serves those static files and forwards `/api` to the Node proces
 `COOKIE_SECURE=true`; in production the API refuses to start with placeholder secrets or
 without it.
 
-Full instructions, including an nginx block, a systemd unit, and a warning about where the
-default `data/` paths actually land: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
+### With Docker
+
+If you would rather not have Node on the host at all, one command installs the whole thing.
+It needs [Docker](https://www.docker.com/products/docker-desktop) and nothing else:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/gondhijagapathi/networth-tracker/main/scripts/deploy.sh -o networth-deploy.sh
+bash networth-deploy.sh
+```
+
+It downloads the source, **generates the three secrets for you**, asks four questions —
+invite code, port, whether an HTTPS proxy sits in front, and a backup passphrase — then
+builds and starts the stack and waits until it answers. Nothing to edit by hand.
+
+You get the API and an nginx serving the front end on `http://localhost:8080`, with the
+database, encrypted uploads and backup bundles on a named Docker volume.
+
+The same script runs everything afterwards:
+
+```bash
+bash networth-deploy.sh status     # is it running
+bash networth-deploy.sh logs       # what it is doing
+bash networth-deploy.sh backup     # take an encrypted backup now
+bash networth-deploy.sh upgrade    # back up, fetch the latest, rebuild, restart
+```
+
+`upgrade` takes a backup **before** it touches anything, because database migrations run at
+boot and are not reversible. It never overwrites your `.env`.
+
+<details>
+<summary>Prefer to drive Compose yourself?</summary>
+
+```bash
+git clone https://github.com/gondhijagapathi/networth-tracker.git
+cd networth-tracker
+cp .env.example .env
+# set the three secrets and BOOTSTRAP_INVITE_CODE, as in the source instructions above
+docker compose up -d --build
+```
+
+Compose pins the container-shaped settings itself — `NODE_ENV`, `COOKIE_SECURE`, the data
+paths and the bind address — so those lines in `.env` are ignored for this route.
+
+</details>
+
+Full instructions for every route — an nginx block, a systemd unit, the Compose stack, and a
+warning about where the default `data/` paths actually land:
+[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 
 ## API
 
@@ -205,7 +251,7 @@ deliberately does **not** protect against — before putting real data in it.
 | [DATA-MODEL.md](docs/DATA-MODEL.md) | Every table and relationship |
 | [SECURITY-MODEL.md](docs/SECURITY-MODEL.md) | Threat model, vault crypto, escrow, limits |
 | [BACKUP.md](docs/BACKUP.md) | Backup, restore, exports, disaster recovery |
-| [DEPLOYMENT.md](docs/DEPLOYMENT.md) | Running it for real: proxy, systemd, data paths, upgrades |
+| [DEPLOYMENT.md](docs/DEPLOYMENT.md) | Running it for real: proxy, systemd, Docker, data paths, upgrades |
 | [INDIA-NOTES.md](docs/INDIA-NOTES.md) | Domain reference: instruments, claims, tax, data sources |
 
 ## Contributing

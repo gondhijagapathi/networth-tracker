@@ -1,0 +1,78 @@
+# Net Worth Tracker — the whole installation.
+#
+#     cp .env.example .env      # then fill in the secrets, as in docs/DEPLOYMENT.md
+#     docker compose up -d --build
+#
+# Two containers: the Node API and an nginx that serves the front end and is the only route
+# to the API. Nothing else — no database server, no Redis, no queue.
+#
+# This listens on plain HTTP on 127.0.0.1:8080. Put your own TLS proxy in front of it and
+# set COOKIE_SECURE=true; see "Behind a reverse proxy" in docs/DEPLOYMENT.md.
+
+services:
+  api:
+    build:
+      context: .
+      target: api
+    image: networth-api:local
+    restart: unless-stopped
+
+    # Secrets come from .env at run time. They are deliberately not build arguments: an
+    # image layer is readable by anyone who can pull the image.
+    env_file: .env
+
+    # These override anything .env says, and they have to. The paths in .env describe the
+    # host filesystem for a bare-metal install; inside the container the data lives on the
+    # volume below, and the server has to bind beyond loopback for nginx to reach it.
+    environment:
+      NODE_ENV: production
+      API_HOST: 0.0.0.0
+      API_PORT: 4000
+      DATABASE_PATH: /var/lib/networth/networth.db
+      UPLOAD_DIR: /var/lib/networth/uploads
+      BACKUP_DIR: /var/lib/networth/backups
+      # Pinned, not taken from .env, and not substitutable. `.env.example` ships `false`
+      # because that is right for `npm run dev` over plain HTTP — but this stack always sets
+      # NODE_ENV=production, which requires it to be true, so a copied .env would otherwise
+      # crash-loop the container on a first run with the reason buried in `docker logs`.
+      #
+      # True is also simply correct for every way this stack is meant to be reached: the
+      # published port is loopback, and browsers treat localhost as a secure context and
+      # accept the cookie; anything else is behind the TLS proxy the docs require.
+      COOKIE_SECURE: 'true'
+      # Cron expressions match local time. Without this the nightly backup runs at 02:00 UTC.
+      TZ: ${TZ:-Asia/Kolkata}
+
+    volumes:
+      # The database, the encrypted upload blobs and the backup bundles. This is the one
+      # thing in this file worth backing up — `docker compose down -v` destroys it.
+      - networth-data:/var/lib/networth
+
+    # No `ports`. The API is reachable only from the compose network, which is what makes
+    # the single trusted proxy hop it assumes actually true.
+    expose:
+      - '4000'
+
+  web:
+    build:
+      context: .
+      target: web
+    image: networth-web:local
+    restart: unless-stopped
+
+    ports:
+      # Loopback by default. Set NETWORTH_BIND=0.0.0.0 ONLY when a TLS proxy on another host
+      # is what reaches this — never to expose it directly.
+      #
+      # Its own variables rather than reusing WEB_PORT, which .env sets to the Vite dev
+      # server's port and which has nothing to do with where this stack is published.
+      - '${NETWORTH_BIND:-127.0.0.1}:${NETWORTH_HTTP_PORT:-8080}:80'
+
+    depends_on:
+      api:
+        # nginx resolves upstream names at startup, so it needs the API to exist before it
+        # boots — not merely to have been created.
+        condition: service_healthy
+
+volumes:
+  networth-data:

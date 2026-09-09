@@ -13,6 +13,17 @@ running it on a box they control — not for the public internet, and not for mu
 There is no database server, no Redis, no message queue. One SQLite file, one directory of
 encrypted blobs.
 
+There are two supported ways to run it, and they deploy the same two pieces either way — the
+Node API, and a web server holding the built front end:
+
+- **From source**, with systemd keeping it alive. Start at [First run](#first-run).
+- **With Docker Compose**, if you would rather not have Node on the host at all. Skip to
+  [Running it in Docker](#running-it-in-docker).
+
+Neither is more supported than the other; the container images are built from this
+repository by the `Dockerfile` at its root, and run the same code with the same
+configuration.
+
 ## First run
 
 ```sh
@@ -164,6 +175,217 @@ dead-man sweep runs hourly and the NAV refresh and backup run on their configure
 all inside this one service. If the service is down at 02:00, that night's backup does not
 happen — which is an argument for `Restart=on-failure` and for checking Settings → Backup
 occasionally.
+
+## Running it in Docker
+
+An alternative to the two sections above, not an addition to them. Same application, same
+`.env`, same data on disk — the host just needs Docker instead of Node.
+
+### The short way
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/gondhijagapathi/networth-tracker/main/scripts/deploy.sh -o networth-deploy.sh
+bash networth-deploy.sh
+```
+
+`scripts/deploy.sh` is the supported path for a container install, and the one to hand to
+somebody who does not want to read this document. It checks that Docker is present and
+reachable, downloads the source, generates the three secrets with `openssl rand`, asks the
+four questions that have no safe default, writes a `.env` at mode 600, builds, starts, and
+waits for the API to report healthy — printing the log and the variable to fix if it does
+not.
+
+It is safe to re-run and it never overwrites an existing `.env`.
+
+```sh
+bash networth-deploy.sh status      # what is running
+bash networth-deploy.sh logs        # follow them
+bash networth-deploy.sh backup      # an encrypted bundle, now
+bash networth-deploy.sh upgrade     # back up, fetch, rebuild, restart
+bash networth-deploy.sh uninstall   # stop and remove; asks separately about the data
+```
+
+Two environment variables steer it:
+
+| Variable | Default | |
+| --- | --- | --- |
+| `NETWORTH_DIR` | `$HOME/networth-tracker` | Where the source lives |
+| `NETWORTH_REF` | `main` | Branch or tag to deploy |
+| `NETWORTH_NONINTERACTIVE` | unset | Accept every default, ask nothing |
+
+`upgrade` takes a backup **before** it fetches anything. Migrations run at boot and are not
+reversible, so that is the only moment a bundle can still capture the old shape of the data.
+If no `BACKUP_PASSPHRASE` is set it says so and asks whether to continue. It then hard-resets
+the checkout — that directory is a deployment, not somewhere to keep local commits — and
+reports any new settings the upgrade introduced, adding the ones that have a sane default
+and naming the ones that do not rather than writing a placeholder into your configuration.
+
+### The long way
+
+If you would rather drive Compose yourself, or you already have the source:
+
+```sh
+git clone https://github.com/gondhijagapathi/networth-tracker.git
+cd networth-tracker
+cp .env.example .env
+# fill in the three secrets and BOOTSTRAP_INVITE_CODE exactly as in "First run"
+docker compose up -d --build
+```
+
+Then open <http://localhost:8080> and register with the bootstrap code.
+
+### What comes up
+
+Two containers, mirroring the reverse-proxy layout above rather than inventing a second
+architecture for containers:
+
+| Service | Image | Role |
+| --- | --- | --- |
+| `api` | built from `Dockerfile`, target `api` | The Node server. Publishes no port. |
+| `web` | built from `Dockerfile`, target `web` | nginx: serves `apps/web/dist`, proxies `/api` to `api`. |
+
+The API is reachable only from the compose network. Everything goes through nginx, which is
+what makes the single trusted proxy hop the API assumes actually true — the same reason the
+bare-metal instructions bind it to loopback.
+
+### Configuration
+
+`docker-compose.yml` reads your `.env` for secrets, then overrides the handful of variables
+that describe the *host* filesystem and cannot mean the same thing inside a container:
+
+```
+NODE_ENV=production
+API_HOST=0.0.0.0                          # so nginx can reach it; loopback would not work
+COOKIE_SECURE=true                        # see below
+DATABASE_PATH=/var/lib/networth/networth.db
+UPLOAD_DIR=/var/lib/networth/uploads
+BACKUP_DIR=/var/lib/networth/backups
+```
+
+Setting them in `.env` has no effect on this route; compose pins them.
+
+`COOKIE_SECURE` is pinned rather than read because `.env.example` ships `false` — correct for
+`npm run dev` over plain HTTP, and fatal here, where `NODE_ENV=production` requires it to be
+true. A copied `.env` would otherwise crash-loop the container with the reason buried in
+`docker compose logs`. True is also simply right for every way this stack is meant to be
+reached: the published port is loopback, and browsers treat `localhost` as a secure context
+and accept the cookie there; anything else is behind the TLS proxy the next section requires.
+
+Everything else — the secrets, the token lifetimes, `BACKUP_CRON`, `STOCK_PRICE_PROVIDER` —
+comes from `.env` and behaves exactly as documented above. Secrets are passed at run time
+and never baked into an image: a layer is readable by anyone who can pull it.
+
+Three variables exist only for this route:
+
+```
+NETWORTH_HTTP_PORT=8080   # host port the stack is published on
+NETWORTH_BIND=127.0.0.1   # 0.0.0.0 ONLY when a TLS proxy on another host reaches it
+TZ=Asia/Kolkata           # cron is local time; without this the nightly backup runs at 02:00 UTC
+```
+
+`NETWORTH_HTTP_PORT` is deliberately not `WEB_PORT` — that one is the Vite dev server's port
+and has nothing to do with where this stack is published.
+
+### TLS
+
+The stack listens on plain HTTP and expects your own TLS proxy in front of it, exactly like
+the nginx block in [Behind a reverse proxy](#behind-a-reverse-proxy). Point that proxy at the
+published port and set, in `.env`:
+
+```
+CORS_ORIGIN=https://networth.example.com
+```
+
+`COOKIE_SECURE` needs no attention here — compose already pins it to `true`, which is what
+makes the session cookie safe to carry over your proxy's HTTPS.
+
+Answering *yes* to `deploy.sh`'s "behind an HTTPS reverse proxy?" question sets both that
+`CORS_ORIGIN` and `NETWORTH_BIND=0.0.0.0`, for a proxy running on another host. If your proxy
+is on this machine, leave `NETWORTH_BIND` at `127.0.0.1`.
+
+Do not publish the port on `0.0.0.0` without TLS in front of it — the session lives in a
+cookie, and a `Secure` cookie over plain HTTP is simply dropped by the browser, so sign-in
+will appear to do nothing at all.
+
+### Where the data goes
+
+One named volume, `networth-data`, mounted at `/var/lib/networth`. It holds the database,
+the encrypted upload blobs and the backup bundles — everything worth keeping.
+
+```sh
+# Take a bundle now. Uses BACKUP_PASSPHRASE from .env; add -it to be prompted instead.
+docker compose exec api node apps/api/dist/cli/backup.js create
+docker compose exec api node apps/api/dist/cli/backup.js list
+docker compose exec -it api node apps/api/dist/cli/backup.js restore /var/lib/networth/backups/<bundle>.ntb
+
+# Migration state, without starting a server
+docker compose exec api node apps/api/dist/db/cli.js status
+
+docker volume inspect networth-tracker_networth-data   # where it lives on the host
+```
+
+> Note the `node dist/...` form rather than `npm run backup`. The npm scripts run the CLI
+> from TypeScript source through `tsx`, and the runtime image contains neither — it ships
+> compiled JavaScript and production dependencies only. The compiled entry points take the
+> same arguments and read the same environment.
+
+Bundles land inside the volume, which is the one place a backup must not stay. Copy them out
+on a schedule of its own:
+
+```sh
+docker compose cp api:/var/lib/networth/backups ./backups
+```
+
+> `docker compose down` stops the stack and leaves the volume alone. **`docker compose down -v`
+> deletes it**, and with it every account, asset and document. Copy your backup bundles off
+> the host before you reach for `-v`.
+
+To keep the data somewhere you can see it, replace the named volume with a bind mount:
+
+```yaml
+volumes:
+  - /srv/networth/data:/var/lib/networth
+```
+
+That directory must be writable by UID 1000 — the container drops to the unprivileged `node`
+user rather than running as root.
+
+### Upgrading
+
+```sh
+bash networth-deploy.sh upgrade
+```
+
+That is the whole procedure: it backs up, fetches, rebuilds, restarts and waits for health.
+By hand it is
+
+```sh
+git pull
+docker compose up -d --build
+```
+
+with the backup as your own responsibility beforehand.
+
+Migrations run at boot, in the API container, before it serves a request. The same rule as
+everywhere else applies: a bundle from a *newer* version is refused rather than restored, so
+upgrade before restoring across machines.
+
+### Logs and health
+
+```sh
+docker compose logs -f api
+docker compose ps          # the api container reports healthy/unhealthy
+```
+
+Both containers carry a `HEALTHCHECK`. The API's polls `/api/health`, which needs no
+authentication and touches no user data, and `web` waits for the API to report healthy
+before it starts — nginx resolves its upstream at boot, so it needs the API to exist and not
+merely to have been created.
+
+The in-process schedules are unchanged by containerisation: the dead-man sweep, the NAV
+refresh and the nightly backup all run inside the `api` container. A container that is not
+running at 02:00 does not take that night's backup, which is what `restart: unless-stopped`
+is for.
 
 ## Backups
 
