@@ -3,8 +3,8 @@
 A self-hosted net worth tracker built for **Indian households** — every asset and liability
 in one place, and a plan for the day someone else has to claim them.
 
-> **Status:** in active development. See [`docs/TASKS.md`](docs/TASKS.md) for what is done
-> and what is pending.
+> **Status:** v1.0.0. Every phase in [`docs/TASKS.md`](docs/TASKS.md) is complete; that file
+> also records what each one deliberately left out and why.
 
 ## Why
 
@@ -24,6 +24,19 @@ So this app does two things:
 2. **Make sure it can be claimed** — nomination tracking per asset, an encrypted vault for
    credentials and document locations, nominees who can actually log in, and a printable
    claim kit per institution.
+
+## Screenshots
+
+|  |  |
+| --- | --- |
+| ![The dashboard: net worth over time, allocation and risk indicators](docs/screenshots/dashboard.png) | ![Nomination hygiene: unnominated assets ranked by value at risk, with the registration steps for each](docs/screenshots/nomination.png) |
+| **Dashboard** — what you are worth, where it is, and what would hurt. | **Nomination hygiene** — what an heir could not easily claim, biggest first, with the steps to fix it. |
+| ![The financial year: capital gains split by treatment, interest accrued, and the 80C bucket](docs/screenshots/tax-year.png) | ![The due calendar: maturities, premiums and instalments over the next months](docs/screenshots/calendar.png) |
+| **Tax year** — estimates, labelled as estimates, with the rates they used printed underneath. | **Due calendar** — maturities, premiums, EMIs, and the PPF minimum before 31 March. |
+
+Regenerate them after a UI change with `npm run screenshots -w @networth/e2e`, which drives
+a real browser against a throwaway database — so they can never be a picture of a version
+that no longer exists.
 
 ## Features
 
@@ -48,6 +61,10 @@ instantly.
 **Yours** — one SQLite file, one-click encrypted backup and restore, JSON and CSV export, no
 telemetry, no third-party scripts, no cloud account.
 
+**On your phone** — installable as a PWA with an offline shell, a lakh/crore toggle, and a
+privacy blur that hides every amount with one tap (or the `h` key) for checking your net
+worth in a queue.
+
 ## Quick start
 
 Requires Node 22 or newer (`.nvmrc` pins the tested version).
@@ -66,7 +83,9 @@ openssl rand -base64 48   # SECRET_ENCRYPTION_KEY
 npm run dev
 ```
 
-The API creates and migrates `data/networth.db` on first boot. To fill an account with a
+The API creates and migrates its SQLite file on first boot — at `apps/api/data/networth.db`,
+because the workspace script runs from `apps/api/`. Set absolute paths in `.env` for anything
+beyond local development; see [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md). To fill an account with a
 household's worth of demo assets — deposits, a fund holding with two years of SIPs, a plot
 of land, EPF, gold bonds and a home loan — register first, then run
 `npm run db:seed -- --email you@example.com`. `SECRET_ENCRYPTION_KEY`
@@ -81,11 +100,16 @@ invite — there is no open signup.
 
 ```bash
 npm run build
-npm start          # Express serves the API and the built web bundle on one port
+npm start          # the API, on API_PORT
 ```
 
-Put it behind a reverse proxy with TLS and set `COOKIE_SECURE=true`. In production the
-API refuses to start with placeholder secrets or with `COOKIE_SECURE=false`.
+The API serves **only** `/api` — `npm run build` emits the front end to `apps/web/dist`, and
+a reverse proxy serves those static files and forwards `/api` to the Node process. Set
+`COOKIE_SECURE=true`; in production the API refuses to start with placeholder secrets or
+without it.
+
+Full instructions, including an nginx block, a systemd unit, and a warning about where the
+default `data/` paths actually land: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 
 ## API
 
@@ -126,6 +150,13 @@ All routes are under `/api`. Sessions are cookie-based; mutating requests must e
 | `POST` | `/estate/:ownerId/key` | Fetch a released escrow — audit-logged on every read |
 | `GET` | `/estate/:ownerId/items`, `/documents` | A released vault's ciphertext, for an heir to decrypt |
 | `GET` | `/estate/claim-kit` | The claim kit skeleton; the browser merges the vault into it |
+| `GET` | `/india/nomination` | Unnominated assets ranked by value, with registration steps |
+| `GET` | `/india/calendar` | Maturities, premiums, EMIs and small-savings minimums, expanded per occurrence |
+| `GET` | `/india/financial-year` | Gains by treatment, interest accrued, 80C and 80D buckets — all estimates |
+| `GET`/`POST` | `/backup` | List bundles and the nightly schedule; take one now (admin) |
+| `GET`/`DELETE` | `/backup/:filename` | Download or remove a bundle (admin) |
+| `POST` | `/backup/restore` | Replace everything from an uploaded bundle (admin) |
+| `GET` | `/export/json`, `/export/csv` | Your own data, to leave with |
 
 Every asset route is scoped: a caller outside an asset's scope is told it does not exist.
 Grants are read-only, so a shared asset is refused for writes in the same terms. Vault routes
@@ -134,10 +165,18 @@ there is no path by which one user's session reads another's vault items directl
 
 ## Backup and restore
 
-Settings → Backup produces a single passphrase-encrypted bundle containing a consistent
-SQLite snapshot, your uploaded documents, and a manifest with checksums. Restore verifies
-the checksum, refuses a newer schema, takes a safety snapshot first, then swaps atomically.
-Nightly automated backups are configurable via `BACKUP_CRON`.
+Settings → Backup produces a single passphrase-encrypted `.ntb` bundle containing a
+consistent SQLite snapshot, your uploaded documents, and a manifest with checksums and the
+applied migration list. Restore verifies every checksum, refuses a bundle from a newer
+schema, takes a safety bundle first, and then replaces the data **inside one transaction**
+rather than swapping a file under a running process.
+
+Decrypted, a bundle is an ordinary `.tar.gz` — deliberately, so that your data is recoverable
+with `tar` alone if this application is ever unavailable to you.
+
+Nightly backups need both `BACKUP_CRON` and `BACKUP_PASSPHRASE`; with no passphrase the
+schedule does not run, and the app says so rather than implying a safety net it does not
+have.
 
 Full details, including a disaster-recovery checklist: [`docs/BACKUP.md`](docs/BACKUP.md).
 
@@ -166,6 +205,7 @@ deliberately does **not** protect against — before putting real data in it.
 | [DATA-MODEL.md](docs/DATA-MODEL.md) | Every table and relationship |
 | [SECURITY-MODEL.md](docs/SECURITY-MODEL.md) | Threat model, vault crypto, escrow, limits |
 | [BACKUP.md](docs/BACKUP.md) | Backup, restore, exports, disaster recovery |
+| [DEPLOYMENT.md](docs/DEPLOYMENT.md) | Running it for real: proxy, systemd, data paths, upgrades |
 | [INDIA-NOTES.md](docs/INDIA-NOTES.md) | Domain reference: instruments, claims, tax, data sources |
 
 ## Contributing

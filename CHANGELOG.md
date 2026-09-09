@@ -5,7 +5,11 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.0.0] — 2026-09-08
+
+The first release. Every phase in `docs/TASKS.md` is complete: assets, analytics, the
+zero-knowledge vault, nominees and the dead-man switch, household merge, price providers,
+encrypted backup and restore, the India-specific reports, and the installable front end.
 
 ### Added
 
@@ -106,8 +110,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bottom tab bar — administration is operational chrome, not a section you check — and it
   shows nobody's assets, because no endpoint under `/api/admin` can read them.
 
+- Backup and restore (P8): a single passphrase-encrypted `.ntb` bundle holding a consistent
+  `db.backup()` snapshot, every uploaded blob, and a manifest carrying the applied migration
+  list, per-table row counts and SHA-256 checksums. Argon2id at the same parameters as a
+  login password derives the key; AES-256-GCM seals it with the plaintext header
+  authenticated as additional data, so weakening the recorded work factor breaks the bundle
+  rather than cheapening it.
+- The bundle is a gzipped tar rather than a zip, deliberately: decrypted, it opens with
+  `tar` on any machine, so the data outlives this application. A test asserts that against
+  the system `tar` rather than the claim being a comment.
+- Restore verifies every checksum, refuses a bundle whose migration list contains anything
+  this installation has not applied, writes a `pre-restore-` safety bundle, and only then
+  replaces the data — by attaching the snapshot and copying it in **inside one transaction**
+  with foreign keys deferred to commit, rather than swapping a file under a running process.
+  Row counts are reported back against the manifest, with any mismatch surfaced as a warning.
+- Nightly backups on `BACKUP_CRON`, with retention that prunes only the automatic bundles.
+  They require `BACKUP_PASSPHRASE`: with none set the schedule does not run, and both the
+  boot log and the Settings screen say so rather than implying a safety net that does not
+  exist.
+- `npm run backup`, `npm run backup:list` and `npm run restore` open the database directly
+  rather than the HTTP API, so they work when the server does not — which is the situation
+  the disaster checklist in `docs/BACKUP.md` assumes.
+- Portable exports: full JSON with exact integer paise and typed detail, and per-asset-class
+  CSV in rupees with a UTF-8 BOM so Excel on Windows reads a rupee sign correctly. Scoped to
+  the caller's own rows rather than their household's, and carrying vault items as the
+  ciphertext they are stored as.
+- India-specific reports (P9) at `/api/india`: a nomination hygiene report ranking
+  unnominated assets by value at risk with the registration steps for each institution; a
+  due calendar expanding maturities, premiums, EMIs, SIPs, RD instalments, SGB coupons and
+  the PPF and SSY minimums into one row per occurrence; and a financial-year report with
+  unrealized gains split by treatment, deposit interest accrued to date, and the 80C and 80D
+  buckets against their limits.
+- `TAX_RATES`, one entry per financial year, so a Budget change is a data edit. A year with
+  no entry uses the most recent earlier one **and the response says so**, rather than showing
+  last year's figures as though they were this year's.
+- Every tax figure is labelled an estimate, and the rates used are printed on the page.
+  Buckets whose rate depends on an income slab this application has never been told report
+  the gain and no tax figure at all, rather than a misleading zero.
+- A Planner screen carrying all three reports, and a Settings screen with backup, restore,
+  export, and display preferences.
+- Progressive web app (P10): a manifest, generated icons, an `apple-touch-icon`, and an
+  offline shell served by a hand-written service worker that caches the app shell and
+  **never** an `/api` response — a cached net worth would outlive a sign-out and a session
+  revocation.
+- A lakh/crore toggle. Amounts follow the reader's preference unless a screen has a reason to
+  override it, and the exact figure stays in the element's `title` either way.
+- Playwright end-to-end coverage of the whole journey in a real browser: register with the
+  bootstrap code, add assets, read the planner, create a vault with real Argon2id and
+  WebCrypto, invite a nominee, confirm the server refuses their writes, back up, archive an
+  asset, restore, and check the net worth comes back to the same figure.
+- `npm run screenshots -w @networth/e2e` regenerates the README's screenshots from a
+  throwaway database, so they cannot age into a picture of a version that no longer exists.
+- `docs/DEPLOYMENT.md`: reverse proxy, systemd unit, upgrades, and where the default data
+  paths actually land.
+
 ### Changed
 
+- **Accessibility.** A measured contrast pass replaced tokens that were failing WCAG AA: in
+  the light theme the semantic green, amber and brand colours were between 2.0:1 and 2.8:1
+  against a white card, and muted text passed only as large text in both themes. Every text
+  token is now measured against the *darkest* surface it can land on rather than the
+  lightest, and white on the primary button moved from 3.8:1 to 5.3:1.
+- `Field` associates its hint and error with `aria-describedby` instead of nesting them
+  inside the `<label>`, where they became part of each control's accessible name — a screen
+  reader announced the "Value" field as "Value Optional — deposits and funds are computed for
+  you., edit text".
+- A skip link, a focusable `<main>`, and named navigation landmarks.
+- The bottom tab bar swaps Household for Planner; Household, Settings and Admin now sit
+  together as the sidebar's secondary group, since none of them is a section you *check*.
 - `documents` is now always encrypted: the plaintext `filename`, `mime` and `encrypted`
   columns are replaced by a single encrypted `meta` envelope. The table had never been
   written to, so the migration rebuilds it rather than carrying dead columns.
+
+### Fixed
+
+- A fresh installation showed the **sign-in** form to the one visitor who cannot use it,
+  under a paragraph telling them to enter the bootstrap invite code, with no field to enter
+  it into. The mode was seeded from `bootstrapRequired` on first render, before the request
+  that answers it had returned; it is now derived, so it follows the answer whenever the
+  visitor has not chosen otherwise. Found by the end-to-end suite on its first run.
+- The financial-year report's interest headline included tax-exempt PPF and SSY interest
+  while the per-payer breakdown beneath it did not, so a tax page showed two totals that
+  could not be reconciled. The headline is now the taxable figure, with the exempt part
+  stated separately.
+- `BACKUP_CRON` and `NAV_REFRESH_CRON` are parsed at boot rather than at their first tick, so
+  a typo stops the process with a clear message instead of throwing at 02:00.

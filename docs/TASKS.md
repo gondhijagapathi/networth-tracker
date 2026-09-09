@@ -6,7 +6,8 @@ here says so and its tests pass.
 
 **Status key:** `[ ]` pending · `[~]` in progress · `[x]` done · `[!]` blocked
 
-Last updated: 2026-09-07 — P6 and P7 complete, 403 tests passing, 0 npm vulnerabilities
+Last updated: 2026-09-08 — P8, P9 and P10 complete. 475 unit and API tests plus 13
+end-to-end tests passing; 0 npm vulnerabilities. This is v1.0.0.
 
 ---
 
@@ -22,9 +23,9 @@ Last updated: 2026-09-07 — P6 and P7 complete, 403 tests passing, 0 npm vulner
 | P5 | Nominees, dead-man switch & claim kit | `[x]` done |
 | P6 | Household & partner merge | `[x]` done |
 | P7 | Price providers | `[x]` done |
-| P8 | Backup & restore | `[~]` next |
-| P9 | India-specific features | `[ ]` pending |
-| P10 | Polish & v1.0.0 release | `[ ]` pending |
+| P8 | Backup & restore | `[x]` done |
+| P9 | India-specific features | `[x]` done |
+| P10 | Polish & v1.0.0 release | `[x]` done |
 
 ---
 
@@ -292,39 +293,152 @@ Worth stating about this phase too:
 
 ## P8 — Backup & restore
 
-- [ ] Online snapshot via `db.backup()`
-- [ ] Bundle: snapshot + uploads + manifest (schema version, checksums)
-- [ ] AES-256-GCM passphrase encryption of the bundle
-- [ ] Restore: verify, version check, safety snapshot, atomic swap
-- [ ] Nightly scheduled backups with retention
-- [ ] JSON + per-class CSV export
-- [ ] Tests: backup → wipe → restore → row counts and totals match
+- [x] Online snapshot via `db.backup()` — SQLite's own backup API, so the snapshot is
+      consistent while the server keeps serving
+- [x] Bundle: snapshot + uploads + manifest (applied migration list, app version, per-table
+      row counts, SHA-256 of the snapshot and of every blob)
+- [x] AES-256-GCM passphrase encryption of the bundle, keyed by Argon2id at the same
+      parameters as a login password
+- [x] Restore: verify every checksum, refuse a newer schema, write a safety bundle, then
+      replace the data in one transaction
+- [x] Nightly scheduled backups with retention
+- [x] JSON + per-class CSV export
+- [x] Tests: backup → wipe → restore → row counts and totals match, plus the container
+      format on its own — wrong passphrase, flipped bit, edited header, unknown version
+
+Worth stating about this phase:
+
+- **It is a tar, not a zip, and that is the whole point.** Decrypted, a bundle is an ordinary
+  `.tar.gz` that opens with tools that were on the machine before this application and will
+  still be there after it. A backup format only its own program can read is a close relative
+  of no backup at all, so `bundle.test.ts` asserts it against the system `tar` rather than
+  leaving it as a comment.
+- **A restore is a transaction, not a file swap.** The plan said "atomic swap"; swapping the
+  file under a process that has it open leaves a running server holding a handle to a
+  database nobody else can see. Instead the snapshot is attached and copied in inside a
+  single transaction with `defer_foreign_keys`, so either every table is replaced or none is.
+  Getting the ordering wrong here was caught by a test: deleting and inserting table by table
+  meant emptying `users` — late in an alphabetical walk — cascaded away the assets restored a
+  few tables earlier. Every delete now happens before any insert.
+- **The schema check compares migration names, not a version number.** A name list says
+  *which* schema rather than how far along it was, so a bundle whose migrations are a subset
+  restores with newer columns taking their defaults, and one containing a migration this
+  build has never seen is refused outright.
+- **A scheduled backup needs a passphrase, and there is no fallback.** With `BACKUP_CRON` set
+  and `BACKUP_PASSPHRASE` empty the job does not run, because writing an unencrypted copy of
+  every account in the household to disk is not a default this application is willing to
+  have. The boot log and the Settings screen both say the schedule is inactive — a household
+  believing it has nightly backups it has never had is the worst available failure.
+
+Deliberately not in this phase:
+
+- **Rotating the vault's data key**, which P5 parked here on the grounds that it wanted a
+  snapshot taken first. It still does, and the snapshot now exists — but re-encrypting every
+  item and every document under a new key is a migration with its own failure modes, and
+  bolting it onto the end of the backup work would have meant shipping it with the least
+  testing of anything in this phase. It stays in the backlog, next to the CAS import.
+- **Incremental or deduplicated backups.** A household's database is a few megabytes and
+  compresses by roughly a factor of five; nightly full bundles at that size are cheaper than
+  the bookkeeping required to avoid them.
 
 ## P9 — India-specific features
 
-- [ ] Nomination hygiene dashboard (value at risk, registration steps)
-- [ ] Maturity & due calendar (next 90 days)
-- [ ] Financial year reporting (Apr–Mar) with assessment year labels
-- [ ] Tax estimates: LTCG/STCG, ₹1.25L exemption, debt MF at slab
-- [ ] FD interest accrual, TDS, 15G/15H reminder
-- [ ] 80C bucket tracker against ₹1.5L; 80D
-- [ ] Indian number formatting + lakh/crore toggle
+- [x] Nomination hygiene dashboard (value at risk, registration steps), grouped by
+      institution because one visit usually fixes several
+- [x] Maturity & due calendar (next 90 days by default), with recurring obligations expanded
+      into one row per occurrence
+- [x] Financial year reporting (Apr–Mar) with assessment year labels
+- [x] Tax estimates: LTCG/STCG at the 12- and 24-month boundaries, the ₹1.25L exemption
+      applied once across the portfolio, debt MF bought since April 2023 at slab
+- [x] FD interest accrual, TDS per payer, 15G/15H reminder
+- [x] 80C bucket tracker against ₹1.5L; 80D
+- [x] Indian number formatting + lakh/crore toggle
+
+Worth stating about the tax figures:
+
+- **The exemption belongs to the year, not to the asset.** ₹1.25 lakh of equity long-term
+  gain is free across the whole portfolio, once. Applying it per holding — the obvious
+  mistake — would under-report the tax of anybody holding more than one fund, and there is a
+  test that says so.
+- **TDS is deducted on the whole interest once the threshold is crossed, not on the excess.**
+  One rupee over and ₹5,000 is withheld rather than ten paise. That cliff is the entire
+  reason Form 15G and 15H exist, and getting it wrong would understate the deduction by a
+  factor of fifty thousand.
+- **The threshold is per payer.** Four deposits at one branch cross it together while each
+  sits under it alone, which is exactly what surprises people, so the report groups by
+  institution rather than by deposit.
+- **A slab rate is reported as unknown rather than as zero.** This application has never been
+  told anybody's income. Those buckets show the gain and no tax figure, because zero would
+  read as "not taxed", which is the opposite of what slab treatment means.
+- **Interest is not a capital gain.** Deposits, EPF and insurance are excluded from the gains
+  report and appear in the interest section instead, so the same rupee is never taxed twice
+  on one screen — and PPF and SSY interest, exempt under section 10, is listed there but kept
+  out of the taxable total.
+
+Deliberately not in this phase:
+
+- **Realized gains.** Everything here is unrealized, because the question worth answering in
+  March is "if I sold this today, where would it land". A record of what has already been
+  sold is a different report, and it needs disposal records this application does not keep.
+- **Loss carry-forward and set-off across years.** Losses net within a bucket, which is what
+  set-off does inside a year. Carrying them forward depends on what was realised and when,
+  and on returns filed elsewhere.
+- **A complete 80C picture.** Tuition fees, stamp duty on a house purchase and five-year
+  tax-saver deposits are all eligible and none is something this app can see. The bucket
+  reports what it found and says on the screen that it is not the whole story.
 
 ## P10 — Polish & v1.0.0 release
 
-- [ ] PWA manifest, icons, offline shell
-- [ ] Privacy blur mode
-- [ ] Accessibility pass (WCAG AA, keyboard, focus states)
-- [ ] Playwright E2E covering the full happy path
-- [ ] README screenshots, deployment guide
-- [ ] `CHANGELOG.md` + tag `v1.0.0`
+- [x] PWA manifest, icons, offline shell
+- [x] Privacy blur mode (shipped in P3; the lakh/crore toggle beside it is new here)
+- [x] Accessibility pass (WCAG AA, keyboard, focus states)
+- [x] Playwright E2E covering the full happy path
+- [x] README screenshots, deployment guide (`docs/DEPLOYMENT.md`)
+- [x] `CHANGELOG.md` + version 1.0.0 across every workspace
+
+Worth stating about this phase:
+
+- **The accessibility pass found real failures rather than confirming a claim.** Contrast was
+  measured by converting each oklch token to sRGB and computing the WCAG ratio, not by
+  eyeballing it. In the light theme the semantic green came out at 2.3:1, amber at 2.0:1 and
+  the brand accent at 2.8:1 against a white card; muted text passed only as large text in
+  both themes; and white on the primary button was 3.8:1. Every token is now measured against
+  the *darkest* surface it can appear on rather than the lightest — a colour that only passes
+  on white is a colour that fails in the sidebar.
+- **`Field` was putting hint text into every control's accessible name.** Nested inside the
+  `<label>`, a hint becomes part of the name, so a screen reader announced "Value" as "Value
+  Optional — deposits and funds are computed for you., edit text". Hints and errors are now
+  attached with `aria-describedby`.
+- **The service worker caches the shell and never an API response.** A cached net worth would
+  survive a sign-out and outlive a revoked session. That means the app *launches* offline but
+  does not *work* offline, which is stated in the file rather than implied by the word "PWA".
+- **The end-to-end suite earned its runtime on its first run**, by finding that a brand-new
+  installation showed the sign-in form to the one visitor who cannot use it. It is the only
+  test that exercises the vault's Argon2id and WebCrypto as they actually ship.
+- **The tab bar swapped Household for Planner.** Six tabs already share a phone's width;
+  Household is configured once rather than checked, so it moved to the sidebar's secondary
+  group with Settings and Admin.
+
+Deliberately not in this phase:
+
+- **A tagged release.** The version is 1.0.0 everywhere and the changelog entry is written,
+  but `git tag` is left to the repository's owner rather than done on their behalf.
+- **Cross-browser E2E.** One browser. Three would triple the runtime to re-test the same
+  server, and the engine differences that remain are not what this suite is for.
 
 ---
 
 ## Backlog (post-v1)
 
 - [ ] CAS PDF import (CAMS / KFintech, NSDL / CDSL)
-- [ ] Email and push notifications
+- [ ] Email and push notifications — the dead-man switch's 50/75/90% warnings are recorded as
+      audit rows and raised as a banner, not sent, because this build has no mail transport
+- [ ] Rotating the vault's **data** key, which is the only real answer to a released escrow.
+      Deferred from P5 to P8 to here: it re-encrypts every item and every document at once,
+      and it wanted a backup taken first — which now exists
+- [ ] Rewriting `holdings.units` and average cost from transaction history, which belongs next
+      to the CAS import that would produce the volume of transactions to justify it
+- [ ] Realized capital gains, which need disposal records this application does not keep
 - [ ] Goal tracking (retirement, child education)
 - [ ] Multi-currency for NRI and RSU holdings
 - [ ] Mobile app shell
