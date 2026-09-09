@@ -68,6 +68,12 @@ jobs:
         if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: npm run test:e2e:install
 
+      # The API's dev server runs from source with tsx, but it imports @networth/shared by
+      # its built entry point like any other consumer would, so that one workspace has to
+      # be compiled first — the web and api dev servers themselves do not need a build.
+      - name: Build shared package
+        run: npm run build -w @networth/shared
+
       # The suite stands up its own API and web server against a throwaway database in the
       # system temp directory, so there is nothing to provision here.
       - name: End-to-end tests
