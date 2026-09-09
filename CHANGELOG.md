@@ -5,6 +5,45 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `scripts/deploy.sh`, one command that installs, configures, upgrades and operates a
+  container deployment. It checks Docker is present and reachable, downloads the source,
+  generates the three secrets itself, asks only the four questions that have no safe default
+  — invite code, port, whether an HTTPS proxy sits in front, backup passphrase — writes a
+  `.env` at mode 600, then builds, starts and waits for the API to report healthy, printing
+  the log and the offending variable if it does not. `upgrade` takes a backup *before*
+  fetching, because migrations run at boot and are not reversible, and reconciles new
+  settings into an existing `.env` without ever overwriting it. Also `status`, `logs`,
+  `backup`, `start`, `stop`, `restart` and an `uninstall` that asks about the data volume
+  separately, twice.
+- Docker deployment as a supported alternative to running from source: a multi-stage
+  `Dockerfile` building an `api` image and an nginx `web` image, a `docker-compose.yml`
+  wiring them together over a named volume, and a Docker section in `docs/DEPLOYMENT.md`.
+  The layout mirrors the bare-metal one rather than inventing a second architecture — the
+  API publishes no port and is reachable only through nginx, which is what makes the single
+  trusted proxy hop it assumes actually true. The container runs as the unprivileged `node`
+  user and carries a healthcheck against `/api/health`.
+
+### Fixed
+
+- `COOKIE_SECURE=false` was read as **true**. The variable was parsed with
+  `z.coerce.boolean()`, which is `Boolean(value)` — under which every non-empty string,
+  including the literal `false` shipped in `.env.example`, is true. Two consequences: the
+  documented boot-time refusal of `COOKIE_SECURE=false` in production could never fire, and
+  a plain-HTTP installation set the `Secure` flag on its session cookies, so the browser
+  dropped them and sign-in silently did nothing. Missed by the test suites because browsers
+  treat `localhost` as a secure context and accept the cookie there regardless; it would
+  have bitten the first person to run this on a LAN address. The value is now parsed as the
+  word `true` or `false`, and anything else is a boot-time error.
+- A first `docker compose up` following the documented steps could not start. Compose sets
+  `NODE_ENV=production`, which requires `COOKIE_SECURE=true`, while `.env.example` ships
+  `false` — correct for `npm run dev`, fatal here — so a copied `.env` produced a
+  crash-looping container whose reason was only visible in `docker compose logs`. Compose
+  now pins `COOKIE_SECURE` alongside the other container-shaped values it already owned.
+
 ## [1.0.0] — 2026-09-08
 
 The first release. Every phase in `docs/TASKS.md` is complete: assets, analytics, the

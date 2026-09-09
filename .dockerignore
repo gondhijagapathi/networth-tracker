@@ -1,0 +1,43 @@
+# The build context is the repository. Everything here either does not belong in an image
+# or would quietly poison one — a host `node_modules` holds native modules compiled against
+# the host's glibc, and `data/` is somebody's actual net worth.
+
+node_modules
+**/node_modules
+
+# Build output. The image builds its own; copying a host `dist` in would mask a broken build.
+dist
+**/dist
+*.tsbuildinfo
+**/*.tsbuildinfo
+
+# Live data and secrets. `.env` is passed to the container at run time by compose, not baked
+# into a layer, because an image layer is readable by anyone who can pull the image.
+.env
+.env.*
+!.env.example
+data
+**/data
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+
+# Not needed to build or run.
+#
+# `apps/e2e` is deliberately NOT listed: it is a workspace named in `package-lock.json`, and
+# `npm ci` fails outright if a locked workspace is missing from the tree. Its own dev
+# dependency is dropped by the `npm prune` at the end of the build like any other.
+.git
+.github
+.husky
+.vscode
+.idea
+coverage
+playwright-report
+test-results
+apps/e2e/tests
+apps/e2e/*.config.ts
+docs
+*.md
+!README.md
