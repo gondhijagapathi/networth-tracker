@@ -7,12 +7,31 @@
  *
  * The search is debounced for the same reason the asset list's is: otherwise "parag parikh"
  * is twelve round trips.
+ *
+ * The "add it" panel is deliberately *not* a `<form>`. This component renders inside the
+ * asset form, and React drops a nested form element — which left the panel's own fields
+ * owned by the asset form, so "Add instrument" performed a native GET submit, reloaded the
+ * page and lost everything typed into it. The panel keeps its fields in state and submits
+ * them from a button instead, and swallows Enter for the same reason: an implicit
+ * submission here belongs to no form but the outer one.
  */
 
 import { useEffect, useState } from 'react';
 import { INSTRUMENT_KINDS, type InstrumentRecord } from '@networth/shared';
 import { endpoints } from '../../lib/endpoints.js';
 import { Button, Field, Input, Select } from '../ui.js';
+
+type InstrumentKind = (typeof INSTRUMENT_KINDS)[number];
+
+interface Draft {
+  name: string;
+  kind: InstrumentKind;
+  amfiSchemeCode: string;
+  symbol: string;
+  category: string;
+}
+
+const EMPTY_DRAFT: Draft = { name: '', kind: 'mf', amfiSchemeCode: '', symbol: '', category: '' };
 
 export function InstrumentPicker({
   value,
@@ -24,6 +43,7 @@ export function InstrumentPicker({
   const [term, setTerm] = useState('');
   const [results, setResults] = useState<InstrumentRecord[]>([]);
   const [creating, setCreating] = useState(false);
+  const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -61,32 +81,31 @@ export function InstrumentPicker({
               .join(' · ')}
           </p>
         </div>
-        <Button variant="ghost" onClick={() => onChange(null)}>
+        <Button type="button" variant="ghost" onClick={() => onChange(null)}>
           Change
         </Button>
       </div>
     );
   }
 
-  async function create(form: HTMLFormElement) {
-    const data = new FormData(form);
+  async function create() {
     setError(null);
     try {
-      const field = (name: string): string | undefined => {
-        const value = String(data.get(name) ?? '').trim();
-        return value === '' ? undefined : value;
+      const optional = (raw: string): string | undefined => {
+        const trimmed = raw.trim();
+        return trimmed === '' ? undefined : trimmed;
       };
       // Every key is spelled out, including the absent ones: these schemas trim and
       // uppercase, and a transformed optional is a required key holding `undefined`.
       const body = await endpoints.createInstrument({
-        kind: (field('kind') ?? 'mf') as (typeof INSTRUMENT_KINDS)[number],
-        name: String(data.get('name') ?? ''),
+        kind: draft.kind,
+        name: draft.name.trim(),
         exchange: 'none',
-        amfiSchemeCode: field('amfiSchemeCode'),
+        amfiSchemeCode: optional(draft.amfiSchemeCode),
         isin: undefined,
-        symbol: field('symbol'),
+        symbol: optional(draft.symbol),
         amc: undefined,
-        category: field('category'),
+        category: optional(draft.category),
       });
       onChange(body.instrument);
     } catch {
@@ -99,6 +118,11 @@ export function InstrumentPicker({
       <Input
         value={term}
         onChange={(event) => setTerm(event.target.value)}
+        // Enter in a search box means "search", and this one is the asset form's only
+        // single-line input at the top level — without this, it submits the whole asset.
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') event.preventDefault();
+        }}
         placeholder="Search by name, AMFI code, ISIN or ticker"
         aria-label="Search instruments"
       />
@@ -125,22 +149,30 @@ export function InstrumentPicker({
       )}
 
       {creating ? (
-        /* Nested forms are invalid HTML, so this collects its own fields and submits them
-           through a button rather than a `form` element. */
-        <div className="space-y-3 rounded-xl p-3" style={{ background: 'var(--surface-sunken)' }}>
-          <form
-            id="new-instrument"
-            className="grid gap-3 sm:grid-cols-2"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void create(event.currentTarget);
-            }}
-          >
+        <div
+          className="space-y-3 rounded-xl p-3"
+          style={{ background: 'var(--surface-sunken)' }}
+          onKeyDown={(event) => {
+            if (event.key !== 'Enter') return;
+            event.preventDefault();
+            void create();
+          }}
+        >
+          <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Name">
-              <Input name="name" required defaultValue={term} />
+              <Input
+                value={draft.name}
+                onChange={(event) => setDraft({ ...draft, name: event.target.value })}
+                required
+              />
             </Field>
             <Field label="Kind">
-              <Select name="kind" defaultValue="mf">
+              <Select
+                value={draft.kind}
+                onChange={(event) =>
+                  setDraft({ ...draft, kind: event.target.value as InstrumentKind })
+                }
+              >
                 {INSTRUMENT_KINDS.map((kind) => (
                   <option key={kind} value={kind}>
                     {kind.toUpperCase()}
@@ -149,31 +181,49 @@ export function InstrumentPicker({
               </Select>
             </Field>
             <Field label="AMFI scheme code" hint="The join key for NAV imports">
-              <Input name="amfiSchemeCode" inputMode="numeric" />
+              <Input
+                value={draft.amfiSchemeCode}
+                onChange={(event) => setDraft({ ...draft, amfiSchemeCode: event.target.value })}
+                inputMode="numeric"
+              />
             </Field>
             <Field label="Ticker">
-              <Input name="symbol" />
+              <Input
+                value={draft.symbol}
+                onChange={(event) => setDraft({ ...draft, symbol: event.target.value })}
+              />
             </Field>
             <Field label="Category" hint="Drives how it is classified — 'Equity Scheme - ELSS'">
-              <Input name="category" />
+              <Input
+                value={draft.category}
+                onChange={(event) => setDraft({ ...draft, category: event.target.value })}
+              />
             </Field>
-          </form>
+          </div>
           {error !== null && (
             <p className="text-xs" style={{ color: 'var(--color-loss)' }}>
               {error}
             </p>
           )}
           <div className="flex gap-2">
-            <Button type="submit" form="new-instrument" variant="primary">
+            <Button type="button" variant="primary" onClick={() => void create()}>
               Add instrument
             </Button>
-            <Button variant="ghost" onClick={() => setCreating(false)}>
+            <Button type="button" variant="ghost" onClick={() => setCreating(false)}>
               Cancel
             </Button>
           </div>
         </div>
       ) : (
-        <Button variant="ghost" onClick={() => setCreating(true)}>
+        <Button
+          type="button"
+          variant="ghost"
+          onClick={() => {
+            setDraft({ ...EMPTY_DRAFT, name: term.trim() });
+            setError(null);
+            setCreating(true);
+          }}
+        >
           Not listed? Add it
         </Button>
       )}

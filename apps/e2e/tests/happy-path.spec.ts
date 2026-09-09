@@ -85,9 +85,29 @@ test('a fixed deposit, a plot of land and a fund holding go in', async ({ page }
   await page.getByRole('button', { name: 'Add asset' }).click();
   await expect(page).toHaveURL(/\/assets\/[0-9a-f-]+$/);
 
+  // The fund is the one asset that needs an instrument behind it, and the picker that
+  // chooses it renders inside this form. That nesting is exactly what broke it once — the
+  // panel was a `<form>` inside a `<form>`, so "Add instrument" reloaded the page instead
+  // of creating anything — so the journey walks the create-it-inline path deliberately.
+  await page.goto('/assets/new');
+  await page.getByLabel('What is it').selectOption('holding');
+  await page.getByLabel('Name', { exact: true }).first().fill('PPFAS Flexi Cap');
+  await page.getByLabel('Search instruments').fill('Parag Parikh');
+  await page.getByRole('button', { name: 'Not listed? Add it' }).click();
+  await page.getByLabel('AMFI scheme code').fill('122639');
+  await page.getByRole('button', { name: 'Add instrument' }).click();
+  // The picker collapses to the chosen scheme, and the page has not navigated away.
+  await expect(page.getByRole('button', { name: 'Change' })).toBeVisible();
+  await expect(page).toHaveURL(/\/assets\/new$/);
+  await page.getByLabel('Units').fill('120.5');
+  await page.getByLabel('Average cost').fill('61.2');
+  await page.getByRole('button', { name: 'Add asset' }).click();
+  await expect(page).toHaveURL(/\/assets\/[0-9a-f-]+$/);
+
   await page.goto('/assets');
   await expect(page.getByText('SBI Fixed Deposit')).toBeVisible();
   await expect(page.getByText('Plot at Kolar')).toBeVisible();
+  await expect(page.getByText('PPFAS Flexi Cap')).toBeVisible();
 });
 
 test('the dashboard reports a net worth built from both', async ({ page }) => {
@@ -107,7 +127,7 @@ test('the nomination report ranks what an heir would struggle to claim', async (
   await signIn(page);
   await page.goto('/planner');
 
-  await expect(page.getByText(/of 2 assets have a registered nominee/)).toBeVisible();
+  await expect(page.getByText(/of 3 assets have a registered nominee/)).toBeVisible();
   // The land is the largest thing with no nomination on it, so it leads the list, and it
   // arrives with the registration steps rather than just a warning.
   await expect(page.getByText('Plot at Kolar')).toBeVisible();
