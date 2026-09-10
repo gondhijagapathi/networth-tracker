@@ -67,15 +67,24 @@ const NOTHING: Candidate = { valuePaise: 0, basis: 'none', asOf: null };
  * And it stopped counting when it was closed; for a row archived without a closing date,
  * the archival itself is the best evidence of when it stopped being real.
  *
- * Both bounds are inclusive. An FD closed on 31 March was something the household owned on
- * 31 March — the money arrived that day — so the closing date is the last date it counts,
- * not the first date it does not. Treating one end as inclusive and the other as exclusive
- * dropped a closed asset out of the chart's own closing-day point.
+ * The two ends of that are inclusive for different reasons, and the closing end depends on
+ * which value is answering:
+ *
+ *   `closedOn` is a statement about a day. An FD closed on 31 March was something the
+ *   household owned on 31 March — the money arrived that day — so it is the last date the
+ *   asset counts, not the first date it does not.
+ *
+ *   `updated_at` is a fallback for a row archived without one, and it is an *instant*, not
+ *   a day. It means "this stopped being mine just now", so today is already the first day
+ *   it does not count — an archived asset has to leave the dashboard when it is archived
+ *   rather than at midnight.
  */
 export function existedOn(facts: { asset: AssetRow; beganOn: string }, asOf: string): boolean {
   if (facts.beganOn > asOf) return false;
   if (facts.asset.status === 'active') return true;
-  return (facts.asset.closedOn ?? facts.asset.updatedAt.slice(0, 10)) >= asOf;
+  return facts.asset.closedOn === null
+    ? facts.asset.updatedAt.slice(0, 10) > asOf
+    : facts.asset.closedOn >= asOf;
 }
 
 /** Value every asset the caller can see, as of a date. */

@@ -552,19 +552,9 @@ export function readEscrowKey(
   ownerUserId: string,
   ip: string | null,
 ): { wrappedDek: string; releasedAt: string } {
-  assertVaultReleased(ctx, granteeUserId, ownerUserId);
-
-  const escrow = ctx.db
-    .select()
-    .from(vaultEscrow)
-    .where(
-      and(eq(vaultEscrow.granteeUserId, granteeUserId), eq(vaultEscrow.ownerUserId, ownerUserId)),
-    )
-    .get();
-
-  // `assertVaultReleased` has already found a released escrow for this pair, so this is a
-  // consistency check rather than an access decision.
-  if (!escrow) throw notFound('No escrow for that estate');
+  // The gate hands back the row it approved, so the key returned below is the key that
+  // decision was about.
+  const escrow = assertVaultReleased(ctx, granteeUserId, ownerUserId);
 
   recordAudit(ctx, {
     actorUserId: granteeUserId,
@@ -586,13 +576,18 @@ export function readEscrowKey(
  * actually happened. Either one alone is not enough, and this is the only function in the
  * codebase that says so, which is why the estate router calls it rather than assembling the
  * same two checks itself.
+ *
+ * Returns the escrow it approved rather than only asserting, so a caller that needs the
+ * wrapped key reads the row this decision was made about. Nothing stops an owner naming the
+ * same heir twice, and re-deriving the escrow from the grantee and owner ids would then be
+ * free to land on a different nomination's row than the one that was just checked.
  */
 export function assertVaultReleased(
   ctx: AppContext,
   granteeUserId: string,
   ownerUserId: string,
-): void {
-  const nominee = ctx.db
+): VaultEscrowRow {
+  const candidates = ctx.db
     .select()
     .from(nominees)
     .where(
@@ -602,17 +597,29 @@ export function assertVaultReleased(
         eq(nominees.status, 'accepted'),
       ),
     )
-    .get();
+    .all();
 
-  if (!nominee) throw notFound('No such estate');
-  if (nominee.accessLevel !== 'vault') {
-    throw forbidden('You were not given vault access to this estate');
+  if (candidates.length === 0) throw notFound('No such estate');
+
+  // With more than one live nomination the widest wins, for the same reason `resolveScope`
+  // ranks overlapping grants that way: narrowing is the owner's to do explicitly, not
+  // something that should fall out of which row a query happened to return first.
+  let released: VaultEscrowRow | null = null;
+  let sawVaultAccess = false;
+
+  for (const nominee of candidates) {
+    if (nominee.accessLevel !== 'vault') continue;
+    sawVaultAccess = true;
+    const escrow = escrowRow(ctx, nominee.id);
+    if (escrow?.state === 'released') {
+      released = escrow;
+      break;
+    }
   }
 
-  const escrow = escrowRow(ctx, nominee.id);
-  if (!escrow || escrow.state !== 'released') {
-    throw forbidden('That vault has not been released');
-  }
+  if (!sawVaultAccess) throw forbidden('You were not given vault access to this estate');
+  if (!released) throw forbidden('That vault has not been released');
+  return released;
 }
 
 /* -------------------------------------------------------------------------- */

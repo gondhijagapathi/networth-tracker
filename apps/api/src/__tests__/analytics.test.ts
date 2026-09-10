@@ -544,6 +544,30 @@ describe('the net worth series', () => {
     expect(dayAfter.body.allocation.totalPaise).toBe(0);
   });
 
+  it('drops an archived asset from the day it was archived', async () => {
+    const asset = await createAsset(alice, {
+      name: 'Savings',
+      type: 'bank_account',
+      valuePaise: 1_00_000_00,
+      valueAsOf: yearsAgo(1),
+      detail: { accountType: 'savings' },
+    });
+    expect((await alice.get('/api/analytics/allocation')).body.allocation.totalPaise).toBe(
+      1_00_000_00,
+    );
+
+    await alice.delete(`/api/assets/${asset.id}`);
+
+    // Archiving records no closing date, so the fallback is `updated_at` — an instant
+    // meaning "as of now", not a day the household still owned this. It has to leave the
+    // dashboard immediately rather than at midnight.
+    expect((await alice.get('/api/analytics/allocation')).body.allocation.totalPaise).toBe(0);
+
+    // History is untouched: it was real yesterday and the chart still says so.
+    const yesterday = await alice.get(`/api/analytics/allocation?asOf=${yearsAgo(1)}`);
+    expect(yesterday.body.allocation.totalPaise).toBe(1_00_000_00);
+  });
+
   it('refuses a window it will not compute', async () => {
     expect((await alice.get('/api/analytics/networth?months=9999')).status).toBe(400);
     expect((await alice.get('/api/analytics/networth?interval=fortnight')).status).toBe(400);
