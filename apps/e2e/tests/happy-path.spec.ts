@@ -228,7 +228,7 @@ test('the nominee signs in read-only, and the server enforces it', async ({ page
 
 test('an admin takes an encrypted backup', async ({ page }) => {
   await signIn(page);
-  await page.goto('/settings');
+  await page.goto('/admin');
 
   await expect(page.getByRole('heading', { name: 'Backup' })).toBeVisible();
   await page.getByLabel('Passphrase').first().fill(BACKUP_PASSPHRASE);
@@ -265,7 +265,7 @@ test('a restore puts back exactly what the backup held', async ({ page }) => {
   const download = await page.request.get(`/api/backup/${bundleFilename}`);
   expect(download.ok()).toBeTruthy();
 
-  await page.goto('/settings');
+  await page.goto('/admin');
   await page.setInputFiles('input[type="file"]', {
     name: bundleFilename,
     mimeType: 'application/octet-stream',

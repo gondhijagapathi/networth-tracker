@@ -1,0 +1,248 @@
+# Cutting a release.
+#
+#     npm version 1.1.0 --workspaces --include-workspace-root --no-git-tag-version
+#     # bump APP_VERSION in packages/shared/src/version.ts to match
+#     git commit -am 'chore: release 1.1.0' && git tag v1.1.0 && git push --follow-tags
+#
+# The tag is what starts this. It publishes two container images to GHCR and a GitHub
+# Release carrying the two files an install actually needs — deploy.sh and cleanup.sh — plus
+# a tarball of those and docker-compose.yml together. Nobody has to clone the repository or
+# build anything to run this application.
+
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  # Re-runnable by hand, for a tag whose image build failed on something transient.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to (re)build, e.g. v1.1.0'
+        required: true
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  # The tag is the version. Anything that disagrees with it — the workspace package.json
+  # files, or the APP_VERSION constant that ends up in every backup manifest — is a release
+  # that lies about itself, so it is caught here rather than shipped.
+  version:
+    name: Check the tag matches the source
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+      tag: ${{ steps.read.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - id: read
+        run: |
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          version="${tag#v}"
+          declared="$(node -p "require('./package.json').version")"
+          constant="$(node -p "require('fs').readFileSync('packages/shared/src/version.ts','utf8').match(/APP_VERSION = '([^']+)'/)[1]")"
+
+          if [ "$version" != "$declared" ] || [ "$version" != "$constant" ]; then
+            echo "::error::Tag $tag says $version, package.json says $declared, APP_VERSION says $constant."
+            exit 1
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Releasing $version"
+
+  # One job per architecture on its own native runner. Cross-building arm64 under QEMU
+  # means compiling better-sqlite3 through an emulator, which takes the better part of an
+  # hour; a native arm64 runner takes the same few minutes as amd64.
+  images:
+    name: ${{ matrix.target }} (${{ matrix.platform }})
+    needs: version
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        # These two multiply: four jobs, each an image for one architecture. `include` does
+        # not add combinations here — it matches the ones above and attaches the runner and
+        # the short name to each.
+        target: [api, web]
+        platform: [linux/amd64, linux/arm64]
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+            arch: amd64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            arch: arm64
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.version.outputs.tag }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Pushed by digest only. The tags that people actually pull are attached in `manifest`
+      # below, once both architectures exist — so a half-published release never leaves a
+      # `:latest` pointing at one architecture.
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: ${{ matrix.target }}
+          platforms: ${{ matrix.platform }}
+          provenance: false
+          cache-from: type=gha,scope=${{ matrix.target }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.target }}-${{ matrix.arch }}
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ github.repository }}/${{ matrix.target }},push-by-digest=true,name-canonical=true,push=true
+
+      # The file name is the digest, so `manifest` can rebuild the reference list without
+      # knowing anything about how many architectures there were.
+      - name: Save the digest
+        run: |
+          digest='${{ steps.build.outputs.digest }}'
+          mkdir -p /tmp/digests
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.target }}-${{ matrix.arch }}
+          path: /tmp/digests/*
+          retention-days: 1
+
+  # The multi-architecture tags. `docker pull` on either an x86 server or an arm64 one
+  # (a Raspberry Pi, an Apple-silicon Mac, a Graviton instance) then resolves to the right
+  # image without the puller knowing any of this happened.
+  manifest:
+    name: Publish the tags
+    needs: [version, images]
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    strategy:
+      matrix:
+        target: [api, web]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: digest-${{ matrix.target }}-*
+          path: /tmp/digests
+          merge-multiple: true
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create and push the manifest list
+        run: |
+          image="${REGISTRY}/${{ github.repository }}/${{ matrix.target }}"
+          refs=''
+          for digest in /tmp/digests/*; do
+            refs="$refs ${image}@sha256:$(basename "$digest")"
+          done
+
+          # shellcheck disable=SC2086 # $refs is a deliberate word list
+          docker buildx imagetools create \
+            --tag "${image}:${{ needs.version.outputs.version }}" \
+            --tag "${image}:latest" \
+            $refs
+
+          docker buildx imagetools inspect "${image}:${{ needs.version.outputs.version }}"
+
+  release:
+    name: Publish the release
+    needs: [version, manifest]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.version.outputs.tag }}
+
+      # What an install needs and nothing else: the two scripts, the compose file, and the
+      # annotated .env.example that documents every setting. deploy.sh downloads exactly
+      # these from the release, which is why they are attached individually as well as in
+      # the tarball — `curl | bash` has to reach one file, not unpack an archive first.
+      - name: Assemble the assets
+        run: |
+          version='${{ needs.version.outputs.version }}'
+          dir="networth-tracker-$version"
+          mkdir -p "dist-release/$dir"
+          cp scripts/deploy.sh scripts/cleanup.sh docker-compose.yml .env.example "dist-release/$dir/"
+          cp docs/DEPLOYMENT.md docs/BACKUP.md "dist-release/$dir/"
+          tar -czf "dist-release/$dir.tar.gz" -C dist-release "$dir"
+          cp scripts/deploy.sh scripts/cleanup.sh docker-compose.yml dist-release/
+          ( cd dist-release && sha256sum deploy.sh cleanup.sh docker-compose.yml "$dir.tar.gz" > checksums.txt )
+          ls -l dist-release
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.version.outputs.version }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          notes="$(mktemp)"
+          cat > "$notes" <<EOF
+          ## Install
+
+          \`\`\`sh
+          curl -fsSL https://github.com/${{ github.repository }}/releases/download/$TAG/deploy.sh -o networth-deploy.sh
+          bash networth-deploy.sh
+          \`\`\`
+
+          It pulls the published images below — no clone, no build. It asks four questions, generates
+          the secrets, and starts the stack. Upgrading later is \`bash networth-deploy.sh upgrade\`.
+
+          ## Images
+
+          - \`ghcr.io/${{ github.repository }}/api:$VERSION\`
+          - \`ghcr.io/${{ github.repository }}/web:$VERSION\`
+
+          Both are \`linux/amd64\` and \`linux/arm64\`.
+
+          ## Your data
+
+          Lives in \`data/\` inside the install directory — database, uploads, backup bundles. Nothing
+          under \`/var\`, and no Docker volume. See \`docs/DEPLOYMENT.md\` in the tarball.
+          EOF
+
+          assets=(
+            dist-release/deploy.sh
+            dist-release/cleanup.sh
+            dist-release/docker-compose.yml
+            "dist-release/networth-tracker-$VERSION.tar.gz"
+            dist-release/checksums.txt
+          )
+
+          # A re-run of a tag whose image build failed the first time finds the release
+          # already there; replacing the assets is the right answer, not a red job.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --title "$VERSION" --notes-file "$notes"
+            gh release upload "$TAG" "${assets[@]}" --clobber
+          else
+            gh release create "$TAG" \
+              --title "$VERSION" \
+              --notes-file "$notes" \
+              --verify-tag \
+              "${assets[@]}"
+          fi

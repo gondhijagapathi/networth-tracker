@@ -123,16 +123,18 @@ If you would rather not have Node on the host at all, one command installs the w
 It needs [Docker](https://www.docker.com/products/docker-desktop) and nothing else:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/gondhijagapathi/networth-tracker/main/scripts/deploy.sh -o networth-deploy.sh
+curl -fsSL https://github.com/gondhijagapathi/networth-tracker/releases/latest/download/deploy.sh -o networth-deploy.sh
 bash networth-deploy.sh
 ```
 
-It downloads the source, **generates the three secrets for you**, asks four questions —
-invite code, port, whether an HTTPS proxy sits in front, and a backup passphrase — then
-builds and starts the stack and waits until it answers. Nothing to edit by hand.
+It downloads one compose file, **generates the three secrets for you**, asks four questions —
+invite code, port, whether an HTTPS proxy sits in front, and a backup passphrase — then pulls
+the published images, starts the stack and waits until it answers. Nothing is compiled here,
+nothing is cloned, and there is nothing to edit by hand.
 
 You get the API and an nginx serving the front end on `http://localhost:8080`, with the
-database, encrypted uploads and backup bundles on a named Docker volume.
+database, encrypted uploads and backup bundles in `data/` inside the install directory —
+a plain directory you can copy, not a Docker volume, and nothing under `/var`.
 
 The same script runs everything afterwards:
 

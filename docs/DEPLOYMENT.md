@@ -73,13 +73,13 @@ working directory:
 > during a restore, so **set absolute paths in `.env` on any real deployment**:
 >
 > ```
-> DATABASE_PATH=/var/lib/networth/networth.db
-> UPLOAD_DIR=/var/lib/networth/uploads
-> BACKUP_DIR=/var/lib/networth/backups
+> DATABASE_PATH=/srv/networth/data/networth.db
+> UPLOAD_DIR=/srv/networth/data/uploads
+> BACKUP_DIR=/srv/networth/data/backups
 > ```
 >
-> Settings → Backup prints the resolved absolute directory, which is the reliable way to see
-> where a given installation is actually writing.
+> Administration → Backup prints the resolved absolute directory, which is the reliable way
+> to see where a given installation is actually writing.
 
 Migrations run automatically at boot, before the first request is served. `npm run db:migrate`
 applies them without starting the server, and `npm run db:status` prints what has been
@@ -167,7 +167,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/networth
+ReadWritePaths=/srv/networth/data
 
 [Install]
 WantedBy=multi-user.target
@@ -180,7 +180,7 @@ the defaults.
 Note that the nightly jobs are in-process `setInterval`/cron timers, not system cron: the
 dead-man sweep runs hourly and the NAV refresh and backup run on their configured schedules,
 all inside this one service. If the service is down at 02:00, that night's backup does not
-happen — which is an argument for `Restart=on-failure` and for checking Settings → Backup
+happen — which is an argument for `Restart=on-failure` and for checking Administration → Backup
 occasionally.
 
 ## Running it in Docker
@@ -191,34 +191,59 @@ An alternative to the two sections above, not an addition to them. Same applicat
 ### The short way
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/gondhijagapathi/networth-tracker/main/scripts/deploy.sh -o networth-deploy.sh
+curl -fsSL https://github.com/gondhijagapathi/networth-tracker/releases/latest/download/deploy.sh -o networth-deploy.sh
 bash networth-deploy.sh
 ```
 
-`scripts/deploy.sh` is the supported path for a container install, and the one to hand to
-somebody who does not want to read this document. It checks that Docker is present and
-reachable, downloads the source, generates the three secrets with `openssl rand`, asks the
-four questions that have no safe default, writes a `.env` at mode 600, builds, starts, and
-waits for the API to report healthy — printing the log and the variable to fix if it does
-not.
+`deploy.sh` is the supported path for a container install, and the one to hand to somebody
+who does not want to read this document. It checks that Docker is present and reachable,
+downloads one compose file, generates the three secrets with `openssl rand`, asks the four
+questions that have no safe default, writes a `.env` at mode 600, pulls the two images that
+release published, starts them, and waits for the API to report healthy — printing the log
+and the variable to fix if it does not.
+
+Nothing is compiled on your machine and the repository is never cloned. What comes down is
+a compose file of a few kilobytes and two images from `ghcr.io`, built for `linux/amd64` and
+`linux/arm64`.
 
 It is safe to re-run and it never overwrites an existing `.env`.
+
+**Building it yourself instead.** For an unreleased branch, or a machine of some other
+architecture:
+
+```sh
+NETWORTH_CHANNEL=source bash networth-deploy.sh
+```
+
+That clones the repository, builds both images here, and is otherwise identical — the same
+questions, the same `.env`, the same data directory. `NETWORTH_REF` picks the branch or tag.
+An installation made this way keeps building on every `upgrade`; one made from a release
+keeps pulling. The script tells them apart by whether `.env` names an image.
 
 ```sh
 bash networth-deploy.sh status      # what is running
 bash networth-deploy.sh logs        # follow them
 bash networth-deploy.sh backup      # an encrypted bundle, now
-bash networth-deploy.sh upgrade     # back up, fetch, rebuild, restart
+bash networth-deploy.sh upgrade     # back up, fetch the latest release, pull, restart
 bash networth-deploy.sh reset       # delete all data and start fresh, keeping the configuration
 bash networth-deploy.sh uninstall   # stop and remove; asks separately about the data
+
+bash scripts/cleanup.sh             # remove what a pre-format-2 install left in /var
 ```
 
-Two environment variables steer it:
+The install directory holds everything: `docker-compose.yml`, `.env`, and `data/` with the
+database, the uploads and the backup bundles. Nothing is written to `/var`, and there is no
+Docker named volume — copying that one directory copies the whole installation.
+
+A few environment variables steer it:
 
 | Variable | Default | |
 | --- | --- | --- |
 | `NETWORTH_DIR` | `$HOME/networth-tracker` | Where the source lives |
-| `NETWORTH_REF` | `main` | Branch or tag to deploy |
+| `NETWORTH_DATA_DIR` | `<install dir>/data` | Where the database, uploads and bundles live |
+| `NETWORTH_CHANNEL` | `release` | `release` pulls published images; `source` clones and builds |
+| `NETWORTH_VERSION` | `latest` | Which release to install, e.g. `1.1.0` |
+| `NETWORTH_REF` | `main` | Branch or tag to build — `source` channel only |
 | `NETWORTH_NONINTERACTIVE` | unset | Accept every default, ask nothing |
 | `NETWORTH_CONFIRM_RESET` | unset | Set to `yes` to allow `reset` when there is no terminal to ask on |
 
@@ -233,8 +258,8 @@ and naming the ones that do not rather than writing a placeholder into your conf
 
 `reset` is for the installation you were only ever trying out: the one seeded with test
 assets, or the one whose first admin account is an email address you no longer want. It
-deletes the data volume — every account, asset, uploaded document and backup bundle — then
-recreates it empty and starts the stack again.
+empties `data/` — every account, asset, uploaded document and backup bundle — then starts
+the stack again on an empty database.
 
 It keeps `.env`, which is the point. The same secrets and the same `BOOTSTRAP_INVITE_CODE`
 come back, and with no accounts left for it to clash with, that code opens registration
@@ -242,12 +267,17 @@ again for a new first admin. Nothing has to be reconfigured.
 
 It asks twice before doing anything, and offers to take a backup first — copying the bundles
 out to `backups-before-reset-<timestamp>/` in the install directory, because a bundle written
-into the volume would be destroyed along with it. There is no terminal to ask on in a script,
+into `data/backups/` would be destroyed along with everything else in there. There is no terminal to ask on in a script,
 so a non-interactive run refuses unless `NETWORTH_CONFIRM_RESET=yes` is set, and that run
 takes no backup.
 
 If what you want is to keep the data and remove the software, that is `uninstall`, which asks
-about the volume separately and leaves it in place by default.
+about `data/` separately and leaves it in place by default.
+
+`scripts/cleanup.sh` is a separate one-off: it removes the `networth-data` Docker volume and
+`/var/lib/networth` that a pre-format-2 installation may have left behind, listing what it
+found and asking before each deletion. `--dry-run` shows the list and stops. It never touches
+the current installation's `data/`.
 
 ### The long way
 
@@ -286,12 +316,14 @@ that describe the *host* filesystem and cannot mean the same thing inside a cont
 NODE_ENV=production
 API_HOST=0.0.0.0                          # so nginx can reach it; loopback would not work
 COOKIE_SECURE=true                        # see below
-DATABASE_PATH=/var/lib/networth/networth.db
-UPLOAD_DIR=/var/lib/networth/uploads
-BACKUP_DIR=/var/lib/networth/backups
+DATABASE_PATH=/data/networth.db
+UPLOAD_DIR=/data/uploads
+BACKUP_DIR=/data/backups
 ```
 
-Setting them in `.env` has no effect on this route; compose pins them.
+Setting them in `.env` has no effect on this route; compose pins them. `/data` is a mount
+point inside the container; what it points at on the host is `NETWORTH_DATA_DIR`, which
+compose *does* read from `.env` — see "Where the data goes" below.
 
 `COOKIE_SECURE` is pinned rather than read because `.env.example` ships `false` — correct for
 `npm run dev` over plain HTTP, and fatal here, where `NODE_ENV=production` requires it to be
@@ -338,19 +370,43 @@ will appear to do nothing at all.
 
 ### Where the data goes
 
-One named volume, `networth-data`, mounted at `/var/lib/networth`. It holds the database,
-the encrypted upload blobs and the backup bundles — everything worth keeping.
+A plain directory on the host: `data/` next to `docker-compose.yml`, bind-mounted into the
+API container at `/data`. It holds the database, the encrypted upload blobs and the backup
+bundles — everything worth keeping. There is no Docker named volume, so nothing of yours
+lives under `/var/lib/docker` where only `docker volume` can reach it.
+
+Two variables in `.env` control it, both written by `deploy.sh`:
+
+```
+NETWORTH_DATA_DIR=./data     # relative to docker-compose.yml, or an absolute path
+NETWORTH_UID=1000            # who the API container runs as
+NETWORTH_GID=1000
+```
+
+The ids matter. A bind mount keeps whatever ownership the host directory already has, so the
+container is told to run as the user who owns that directory; otherwise the server cannot
+write its own database. `deploy.sh` fills them in from `id -u` and `id -g`, which is also
+what makes the files it writes deletable without `sudo`. If you create the directory by hand,
+create it as the user in `NETWORTH_UID`.
+
+To put the data on another disk, give `NETWORTH_DATA_DIR` an absolute path and move the
+directory to match:
+
+```sh
+bash deploy.sh stop
+mv ~/networth-tracker/data /srv/networth-data
+sed -i 's#^NETWORTH_DATA_DIR=.*#NETWORTH_DATA_DIR=/srv/networth-data#' ~/networth-tracker/.env
+bash deploy.sh start
+```
 
 ```sh
 # Take a bundle now. Uses BACKUP_PASSPHRASE from .env; add -it to be prompted instead.
 docker compose exec api node apps/api/dist/cli/backup.js create
 docker compose exec api node apps/api/dist/cli/backup.js list
-docker compose exec -it api node apps/api/dist/cli/backup.js restore /var/lib/networth/backups/<bundle>.ntb
+docker compose exec -it api node apps/api/dist/cli/backup.js restore /data/backups/<bundle>.ntb
 
 # Migration state, without starting a server
 docker compose exec api node apps/api/dist/db/cli.js status
-
-docker volume inspect networth-tracker_networth-data   # where it lives on the host
 ```
 
 > Note the `node dist/...` form rather than `npm run backup`. The npm scripts run the CLI
@@ -358,26 +414,29 @@ docker volume inspect networth-tracker_networth-data   # where it lives on the h
 > compiled JavaScript and production dependencies only. The compiled entry points take the
 > same arguments and read the same environment.
 
-Bundles land inside the volume, which is the one place a backup must not stay. Copy them out
-on a schedule of its own:
+Bundles land in `data/backups/`, which is the one place a backup must not stay: it is the
+same disk as the database it protects. Copy them off on a schedule of its own:
 
 ```sh
-docker compose cp api:/var/lib/networth/backups ./backups
+rsync -a ~/networth-tracker/data/backups/ elsewhere:/networth-backups/
 ```
 
-> `docker compose down` stops the stack and leaves the volume alone. **`docker compose down -v`
-> deletes it**, and with it every account, asset and document. Copy your backup bundles off
-> the host before you reach for `-v`.
+> `docker compose down` stops the stack and leaves `data/` alone — and so does `down -v`,
+> now that there is no volume to delete. Removing the data means removing the directory,
+> which is what `deploy.sh reset` and `deploy.sh uninstall` ask about before doing.
 
-To keep the data somewhere you can see it, replace the named volume with a bind mount:
+**Upgrading from an older install.** Deploy format 1 kept the data in a `networth-data`
+Docker volume. If you have one, copy it into the new directory before starting the upgraded
+stack, then remove the leftovers:
 
-```yaml
-volumes:
-  - /srv/networth/data:/var/lib/networth
+```sh
+mkdir -p ~/networth-tracker/data
+docker run --rm -v networth_networth-data:/from -v ~/networth-tracker/data:/to \
+  alpine sh -c 'cp -a /from/. /to/'
+sudo chown -R "$(id -u):$(id -g)" ~/networth-tracker/data
+
+bash scripts/cleanup.sh          # removes the old volume and /var/lib/networth, asking first
 ```
-
-That directory must be writable by UID 1000 — the container drops to the unprivileged `node`
-user rather than running as root.
 
 ### Upgrading
 
@@ -493,6 +552,51 @@ Migrations run at boot. Take a backup first — that is what it is for.
 
 Restoring a bundle taken by a *newer* version is refused rather than attempted, so upgrade
 before restoring if you are moving a bundle between machines that have drifted apart.
+
+## Cutting a release
+
+A tag is the whole trigger. `.github/workflows/release.yml` does the rest.
+
+```sh
+npm version 1.1.0 --workspaces --include-workspace-root --no-git-tag-version
+# bump APP_VERSION in packages/shared/src/version.ts to the same number
+git commit -am 'chore: release 1.1.0'
+git tag v1.1.0
+git push --follow-tags
+```
+
+The version lives in three places — the workspace `package.json` files, and the `APP_VERSION`
+constant that is stamped into every backup manifest — and the workflow refuses to publish a
+tag that disagrees with either. `version.test.ts` catches the same drift earlier, in CI.
+
+What the workflow publishes:
+
+| | |
+| --- | --- |
+| `ghcr.io/gondhijagapathi/networth-tracker/api:<version>` | The Node server |
+| `ghcr.io/gondhijagapathi/networth-tracker/web:<version>` | nginx and the built front end |
+| `deploy.sh`, `cleanup.sh`, `docker-compose.yml` | Attached to the release, individually |
+| `networth-tracker-<version>.tar.gz` | Those three plus `.env.example` and these docs |
+| `checksums.txt` | `sha256sum` of each of the above |
+
+Both images carry `linux/amd64` and `linux/arm64`, each built on a runner of that
+architecture rather than through QEMU — an emulated `better-sqlite3` compile takes the
+better part of an hour, a native one takes minutes. The per-architecture images are pushed
+by digest first and the `:<version>` and `:latest` tags are attached only once both exist,
+so a half-finished release never leaves `:latest` pointing at one architecture.
+
+`latest` moves with every release. `deploy.sh` resolves it once at install time and then
+writes the exact version into `.env`, so an installation never silently changes underneath
+itself — an upgrade is something you run.
+
+**Once, after the first release.** A new GHCR package is private even when its repository is
+public, and `deploy.sh` pulls anonymously. Open **Packages → networth-tracker/api → Package
+settings → Change visibility → Public**, and the same for `web`. Until that is done, an
+install on somebody else's machine fails at the pull step with `denied`.
+
+If an image build fails on something transient, re-run the workflow by hand from the Actions
+tab with the tag as its input: it rebuilds, then updates the existing release's assets rather
+than failing on one that is already there.
 
 ## Health
 

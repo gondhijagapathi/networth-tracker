@@ -1,7 +1,12 @@
 # Net Worth Tracker — the whole installation.
 #
 #     cp .env.example .env      # then fill in the secrets, as in docs/DEPLOYMENT.md
-#     docker compose up -d --build
+#     mkdir -p data
+#     docker compose up -d --build            # build from this checkout
+#     docker compose pull && docker compose up -d --no-build   # or run published images
+#
+# All state lives in ./data next to this file — database, uploads and backup bundles. There
+# is no named volume: what the application owns is a directory you can see.
 #
 # Two containers: the Node API and an nginx that serves the front end and is the only route
 # to the API. Nothing else — no database server, no Redis, no queue.
@@ -11,10 +16,14 @@
 
 services:
   api:
+    # Two ways in. A release install sets NETWORTH_IMAGE_API to a published tag and never
+    # builds — `deploy.sh` passes `--no-build` there, so the `build:` block below is inert
+    # and the source tree it points at does not have to exist. Building from a checkout is
+    # the other way, and then the default local tag is what gets built.
+    image: ${NETWORTH_IMAGE_API:-networth-api:local}
     build:
       context: .
       target: api
-    image: networth-api:local
     restart: unless-stopped
 
     # Secrets come from .env at run time. They are deliberately not build arguments: an
@@ -22,15 +31,16 @@ services:
     env_file: .env
 
     # These override anything .env says, and they have to. The paths in .env describe the
-    # host filesystem for a bare-metal install; inside the container the data lives on the
-    # volume below, and the server has to bind beyond loopback for nginx to reach it.
+    # host filesystem for a bare-metal install; inside the container everything lives under
+    # /data, which is the directory bind-mounted below, and the server has to bind beyond
+    # loopback for nginx to reach it.
     environment:
       NODE_ENV: production
       API_HOST: 0.0.0.0
       API_PORT: 4000
-      DATABASE_PATH: /var/lib/networth/networth.db
-      UPLOAD_DIR: /var/lib/networth/uploads
-      BACKUP_DIR: /var/lib/networth/backups
+      DATABASE_PATH: /data/networth.db
+      UPLOAD_DIR: /data/uploads
+      BACKUP_DIR: /data/backups
       # Pinned, not taken from .env, and not substitutable. `.env.example` ships `false`
       # because that is right for `npm run dev` over plain HTTP — but this stack always sets
       # NODE_ENV=production, which requires it to be true, so a copied .env would otherwise
@@ -49,10 +59,17 @@ services:
       # install behind a reverse proxy.
       APP_BASE_URL: ${APP_BASE_URL:-}
 
+    # The image runs as `node` (uid 1000). A bind mount keeps whatever ownership the host
+    # directory already has, so the container is told to run as the user who owns it —
+    # otherwise the server cannot write its own database, and every file it did write would
+    # need root to delete. deploy.sh puts the invoking user's ids here.
+    user: '${NETWORTH_UID:-1000}:${NETWORTH_GID:-1000}'
+
     volumes:
-      # The database, the encrypted upload blobs and the backup bundles. This is the one
-      # thing in this file worth backing up — `docker compose down -v` destroys it.
-      - networth-data:/var/lib/networth
+      # The database, the encrypted upload blobs and the backup bundles — a plain directory
+      # on the host, next to this file, so it can be listed, copied and deleted without
+      # going through Docker. This is the one thing in this file worth backing up.
+      - ${NETWORTH_DATA_DIR:-./data}:/data
 
     # No `ports`. The API is reachable only from the compose network, which is what makes
     # the single trusted proxy hop it assumes actually true.
@@ -60,10 +77,10 @@ services:
       - '4000'
 
   web:
+    image: ${NETWORTH_IMAGE_WEB:-networth-web:local}
     build:
       context: .
       target: web
-    image: networth-web:local
     restart: unless-stopped
 
     ports:
@@ -79,6 +96,3 @@ services:
         # nginx resolves upstream names at startup, so it needs the API to exist before it
         # boots — not merely to have been created.
         condition: service_healthy
-
-volumes:
-  networth-data:

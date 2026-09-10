@@ -4,26 +4,55 @@
 #
 # One script for both, because they are the same job with a different starting point and
 # because an upgrade path that is a separate set of instructions is an upgrade path people
-# get wrong. It fetches the source, asks the handful of questions that have no safe default,
-# generates the secrets that must never have one, and hands the rest to Docker Compose.
+# get wrong. It asks the handful of questions that have no safe default, generates the
+# secrets that must never have one, and hands the rest to Docker Compose.
+#
+# By default it installs a published release: one compose file downloaded, two images
+# pulled, nothing compiled and no clone. `NETWORTH_CHANNEL=source` clones the repository and
+# builds the images here instead — for an unreleased branch, or an architecture the release
+# does not publish.
 #
 #     bash deploy.sh              install, or upgrade an existing installation
 #     bash deploy.sh upgrade      upgrade explicitly (refuses if nothing is installed)
 #     bash deploy.sh status|logs|backup|start|stop|restart|reset|uninstall
 #
-# It is safe to re-run. Your `.env` is never overwritten, and the data volume is never
-# touched except by `reset` and `uninstall`, both of which ask first.
+# Everything the installation owns lives in one place: the install directory. The source is
+# there, `.env` is there, and so is `data/` — the database, the uploaded documents and the
+# backup bundles. Nothing is written to /var, and there is no Docker named volume to hunt
+# for; a copy of that directory is a copy of the whole installation.
+#
+# It is safe to re-run. Your `.env` is never overwritten, and `data/` is never touched
+# except by `reset` and `uninstall`, both of which ask first.
 
 set -euo pipefail
 
-REPO_URL="${NETWORTH_REPO:-https://github.com/gondhijagapathi/networth-tracker.git}"
+REPO_SLUG="${NETWORTH_REPO_SLUG:-gondhijagapathi/networth-tracker}"
+REPO_URL="${NETWORTH_REPO:-https://github.com/$REPO_SLUG.git}"
 REPO_REF="${NETWORTH_REF:-main}"
 INSTALL_DIR="${NETWORTH_DIR:-$HOME/networth-tracker}"
 PROJECT_NAME="networth"
+REGISTRY="${NETWORTH_REGISTRY:-ghcr.io}"
+
+# Two ways to install, and the difference is whether this machine compiles anything.
+#
+#   release  the default. Downloads docker-compose.yml from a GitHub release and pulls the
+#            images that release published. A few hundred kilobytes and about a minute.
+#   source   clones the repository and builds the images here. Needed to run an unreleased
+#            branch, and on any architecture the release does not publish.
+#
+# `source` is chosen automatically when NETWORTH_REF names something other than a release,
+# because a branch has no images to pull.
+CHANNEL="${NETWORTH_CHANNEL:-release}"
+
+# Which release. `latest` asks GitHub; anything else is a tag, with or without the `v`.
+WANTED_VERSION="${NETWORTH_VERSION:-latest}"
 
 # Written into .env so a re-run can tell what the last run chose. Bumped only when this
 # script needs to do something different with an installation made by an older one.
-DEPLOY_FORMAT=1
+#
+# 2 moved the data out of the `networth-data` Docker volume and into a plain directory on
+# the host — see `data_dir` below and scripts/cleanup.sh for the leftovers of format 1.
+DEPLOY_FORMAT=2
 
 # ---------------------------------------------------------------------------
 # Output
@@ -153,9 +182,142 @@ Either the daemon is not running (start Docker Desktop, or:
 }
 
 compose_cmd() {
-  # `--project-name` keeps the volume and container names stable regardless of what the
-  # install directory is called, so renaming the directory does not orphan the data.
+  # `--project-name` keeps the container names stable regardless of what the install
+  # directory is called.
   ( cd "$INSTALL_DIR" && $COMPOSE --project-name "$PROJECT_NAME" "$@" )
+}
+
+# Where the database, the uploads and the backup bundles are on this host.
+#
+# Compose resolves a relative NETWORTH_DATA_DIR against the directory holding
+# docker-compose.yml, so this has to resolve it the same way to talk about the same files.
+data_dir() {
+  # `.env` is the authority once an installation exists; the environment is how a first
+  # install chooses somewhere other than the default.
+  local configured; configured="$(env_value NETWORTH_DATA_DIR)"
+  [ -z "$configured" ] && configured="${NETWORTH_DATA_DIR:-}"
+  case "$configured" in
+    '')  printf '%s/data' "$INSTALL_DIR" ;;
+    /*)  printf '%s' "$configured" ;;
+    *)   printf '%s/%s' "$INSTALL_DIR" "${configured#./}" ;;
+  esac
+}
+
+# Created before the containers start, and owned by whoever runs this script. Docker would
+# otherwise create the mount point itself, owned by root, and the server — running as this
+# same user — could not write its database into it.
+ensure_data_dir() {
+  local dir; dir="$(data_dir)"
+  mkdir -p "$dir/uploads" "$dir/backups"
+  chmod 700 "$dir"
+}
+
+# ---------------------------------------------------------------------------
+# Releases
+#
+# A release install never sees the source. It needs two files — the compose file that
+# describes the stack, and the .env.example that `reconcile_env` compares against on an
+# upgrade — and two image tags to pull. Everything else is in the images.
+# ---------------------------------------------------------------------------
+
+# The files a release install downloads, and the only ones it downloads.
+RELEASE_FILES='docker-compose.yml .env.example'
+
+have_curl() { command -v curl >/dev/null 2>&1; }
+
+# fetch <url> <destination>
+fetch() {
+  if have_curl; then
+    curl -fsSL "$1" -o "$2"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q -O "$2" "$1"
+  else
+    die 'Neither curl nor wget is available. Install one of them.'
+  fi
+}
+
+# Resolves `latest` to a real tag, and normalises `1.2.3` to `v1.2.3`. Prints the tag.
+#
+# The GitHub API rather than the `/releases/latest` redirect, because the redirect target is
+# not stable across the two hosts GitHub serves it from, and because a rate-limited or
+# offline answer here has to be a clear error rather than a URL that 404s later.
+resolve_release_tag() {
+  local wanted="$1"
+
+  if [ "$wanted" != 'latest' ]; then
+    case "$wanted" in v*) printf '%s' "$wanted" ;; *) printf 'v%s' "$wanted" ;; esac
+    return
+  fi
+
+  local body tag
+  body="$(fetch_stdout "https://api.github.com/repos/$REPO_SLUG/releases/latest")" || body=''
+  tag="$(printf '%s' "$body" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1)"
+
+  [ -n "$tag" ] || die \
+"Could not find the latest release of $REPO_SLUG.
+
+  If this repository has no releases yet, build from source instead:
+    NETWORTH_CHANNEL=source bash $0"
+
+  printf '%s' "$tag"
+}
+
+# Quiet on failure: the caller turns a missing release into its own message, and curl's
+# "error: 404" on the way past helps nobody.
+fetch_stdout() {
+  if have_curl; then
+    curl -fsSL "$1" 2>/dev/null
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q -O - "$1"
+  else
+    die 'Neither curl nor wget is available. Install one of them.'
+  fi
+}
+
+# Downloads the release's compose file and .env.example into the install directory.
+fetch_release() {
+  local tag="$1" base file
+  base="https://github.com/$REPO_SLUG/releases/download/$tag"
+
+  mkdir -p "$INSTALL_DIR"
+  for file in $RELEASE_FILES; do
+    # .env.example is not attached separately — it travels in the tarball — so it comes from
+    # the tag on the repository instead. Same content, same commit.
+    if [ "$file" = '.env.example' ]; then
+      fetch "https://raw.githubusercontent.com/$REPO_SLUG/$tag/.env.example" "$INSTALL_DIR/$file" \
+        || die "Could not download .env.example for $tag"
+    else
+      fetch "$base/$file" "$INSTALL_DIR/$file" || die "Could not download $file from release $tag"
+    fi
+  done
+}
+
+image_ref() { printf '%s/%s/%s:%s' "$REGISTRY" "$REPO_SLUG" "$1" "${2#v}"; }
+
+# `--no-build` for any installation that runs published images, so a registry that is down
+# can never quietly become a local build against source that is not there. An installation
+# built from a checkout has its images already and does not care either way.
+no_build_flag() {
+  [ -n "$(env_value NETWORTH_IMAGE_API)" ] && printf -- '--no-build'
+  return 0
+}
+
+# Rewrites the three lines that say which release is installed. Used by `upgrade`; the
+# install path writes them into a fresh .env instead.
+set_release_in_env() {
+  local tag="$1" env="$INSTALL_DIR/.env" key
+  for key in NETWORTH_VERSION NETWORTH_IMAGE_API NETWORTH_IMAGE_WEB; do
+    grep -q "^$key=" "$env" || printf '%s=\n' "$key" >> "$env"
+  done
+  # A temporary file and a move, so an interrupted write cannot leave a half-written .env
+  # holding somebody's only copy of their secrets.
+  local tmp; tmp="$(mktemp)"
+  sed -e "s#^NETWORTH_VERSION=.*#NETWORTH_VERSION=${tag#v}#" \
+      -e "s#^NETWORTH_IMAGE_API=.*#NETWORTH_IMAGE_API=$(image_ref api "$tag")#" \
+      -e "s#^NETWORTH_IMAGE_WEB=.*#NETWORTH_IMAGE_WEB=$(image_ref web "$tag")#" \
+      "$env" > "$tmp"
+  cat "$tmp" > "$env"
+  rm -f "$tmp"
 }
 
 # ---------------------------------------------------------------------------
@@ -212,7 +374,10 @@ download_tarball() {
 }
 
 installed_version() {
-  if [ -d "$INSTALL_DIR/.git" ]; then
+  local recorded; recorded="$(env_value NETWORTH_VERSION)"
+  if [ -n "$recorded" ]; then
+    printf '%s' "$recorded"
+  elif [ -d "$INSTALL_DIR/.git" ]; then
     ( cd "$INSTALL_DIR" && git describe --tags --always 2>/dev/null || git rev-parse --short HEAD )
   elif [ -f "$INSTALL_DIR/package.json" ]; then
     sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$INSTALL_DIR/package.json" | head -1
@@ -352,6 +517,25 @@ write_env() {
   refresh_secret="$(gen_secret)"
   encryption_secret="$(gen_secret)"
 
+  # A release install runs published images and records which ones, so `status` can say what
+  # is installed and `upgrade` knows what it is upgrading from. A source install leaves all
+  # three unset, and compose falls back to the local tags it builds.
+  local release_lines=''
+  if [ "$CHANNEL" = 'release' ] && [ -n "${RELEASE_TAG:-}" ]; then
+    release_lines="$(cat <<RELEASE
+
+# --- Which release ---
+# Published images, pulled rather than built. Change these only through \`deploy.sh upgrade\`,
+# which moves all three together.
+NETWORTH_VERSION=${RELEASE_TAG#v}
+NETWORTH_IMAGE_API=$(image_ref api "$RELEASE_TAG")
+NETWORTH_IMAGE_WEB=$(image_ref web "$RELEASE_TAG")
+RELEASE
+)"
+    release_lines="$release_lines
+"
+  fi
+
   umask 077
   cat > "$INSTALL_DIR/.env" <<EOF
 # Net Worth Tracker — written by scripts/deploy.sh on $(date -u '+%Y-%m-%dT%H:%M:%SZ').
@@ -372,6 +556,17 @@ CORS_ORIGIN=$cors
 NETWORTH_BIND=$bind
 NETWORTH_HTTP_PORT=$port
 
+# --- Where the data lives ---
+# The database, the uploaded documents and the backup bundles, as a plain directory on this
+# host. Relative to this file's directory. Move it to another disk by putting an absolute
+# path here and moving the directory to match.
+NETWORTH_DATA_DIR=${NETWORTH_DATA_DIR:-./data}
+# The API container runs as this user so that the files it writes belong to you and not to
+# root. These are the ids of whoever ran deploy.sh.
+NETWORTH_UID=$(id -u)
+NETWORTH_GID=$(id -g)
+
+${release_lines}
 # --- Auth ---
 # Generated locally by deploy.sh. They have never left this machine.
 JWT_ACCESS_SECRET=$access_secret
@@ -485,6 +680,26 @@ reconcile_env() {
 # ---------------------------------------------------------------------------
 
 build_and_start() {
+  ensure_data_dir
+
+  if [ "$CHANNEL" = 'release' ]; then
+    step 'Pulling the images'
+    say "${DIM}A few hundred megabytes the first time, and almost nothing on later upgrades —"
+    say "the layers that did not change are already here.${RESET}"
+    compose_cmd pull || die \
+"Could not pull the images for this release.
+
+  If this machine is not linux/amd64 or linux/arm64, no image was published for it.
+  Build them here instead:
+    NETWORTH_CHANNEL=source bash $0"
+
+    step 'Starting'
+    # `--no-build` so a failed pull can never turn into a silent local build against a
+    # source tree a release install does not have.
+    compose_cmd up -d --remove-orphans --no-build
+    return
+  fi
+
   step 'Building the images'
   say "${DIM}The first build compiles a native module and takes a few minutes. Later builds reuse"
   say "most of that work and are much quicker.${RESET}"
@@ -552,10 +767,19 @@ cmd_install() {
 
   if [ -d "$INSTALL_DIR" ] && [ -n "$(ls -A "$INSTALL_DIR" 2>/dev/null)" ]; then
     if [ -f "$INSTALL_DIR/docker-compose.yml" ]; then
-      say "Found the source in $INSTALL_DIR but no .env — configuring it."
+      say "Found an installation in $INSTALL_DIR but no .env — configuring it."
+      # Whatever is already there decides: a checkout builds, a downloaded compose file
+      # pulls. Guessing the other way would either build in a directory with no Dockerfile
+      # or pull an image for source somebody deliberately put here.
+      [ -f "$INSTALL_DIR/Dockerfile" ] && CHANNEL='source'
     else
       die "$INSTALL_DIR exists and is not empty. Move it aside, or set NETWORTH_DIR to somewhere else."
     fi
+  elif [ "$CHANNEL" = 'release' ]; then
+    RELEASE_TAG="$(resolve_release_tag "$WANTED_VERSION")"
+    step "Downloading release $RELEASE_TAG into $INSTALL_DIR"
+    fetch_release "$RELEASE_TAG"
+    ok "Release $RELEASE_TAG ready — the images come down when the stack starts."
   else
     fetch_source install
   fi
@@ -574,7 +798,7 @@ ${GREEN}${BOLD}Net Worth Tracker is running.${RESET}
   Open          ${BOLD}$url${RESET}
   Register with ${BOLD}${DEPLOY_INVITE}${RESET}
                 ${DIM}That code works once, to create the admin account. Everyone after that
-                needs an invite the admin issues from Settings.${RESET}
+                needs an invite the admin issues from Administration.${RESET}
 
 EOF
   if [ "${DEPLOY_BEHIND_PROXY:-0}" -eq 1 ]; then
@@ -628,7 +852,7 @@ cmd_upgrade() {
   if [ -n "$(env_value BACKUP_PASSPHRASE)" ]; then
     step 'Taking a backup first'
     if compose_cmd exec -T api node apps/api/dist/cli/backup.js create; then
-      ok 'Backup written to the data volume'
+      ok "Backup written to $(data_dir)/backups"
     else
       warn 'The backup failed.'
       confirm 'Continue with the upgrade anyway?' 'n' || die 'Stopped. Nothing has changed.'
@@ -638,7 +862,22 @@ cmd_upgrade() {
     confirm 'Continue without one?' 'n' || die 'Stopped. Nothing has changed.'
   fi
 
-  fetch_source upgrade
+  if [ -n "$(env_value NETWORTH_IMAGE_API)" ]; then
+    RELEASE_TAG="$(resolve_release_tag "$WANTED_VERSION")"
+    if [ "${RELEASE_TAG#v}" = "$before" ]; then
+      say ''
+      ok "Already on $before, which is the latest release."
+      confirm 'Pull and restart anyway?' 'n' || { say 'Nothing to do.'; return; }
+    fi
+    step "Fetching release $RELEASE_TAG"
+    fetch_release "$RELEASE_TAG"
+    set_release_in_env "$RELEASE_TAG"
+    ok "Release files updated"
+  else
+    CHANNEL='source'
+    fetch_source upgrade
+  fi
+
   reconcile_env
   build_and_start
   wait_for_health
@@ -652,19 +891,27 @@ cmd_status() {
   require_docker
   is_installed || die "Nothing is installed in $INSTALL_DIR."
   say "Installed at $INSTALL_DIR, version $(installed_version)"
+  if [ -n "$(env_value NETWORTH_IMAGE_API)" ]; then
+    say "Running     $(env_value NETWORTH_IMAGE_API)"
+  else
+    say "Running     images built from this checkout"
+  fi
+  say "Data in     $(data_dir)"
   say "Serving on http://localhost:$(env_value NETWORTH_HTTP_PORT)"
   say ''
   compose_cmd ps
 }
 
 cmd_logs()    { require_docker; compose_cmd logs -f --tail 100 "${@:-}"; }
-cmd_start()   { require_docker; compose_cmd up -d; wait_for_health; }
+# shellcheck disable=SC2046 # deliberately unquoted: an empty flag must vanish
+cmd_start()   { require_docker; ensure_data_dir; compose_cmd up -d $(no_build_flag); wait_for_health; }
 cmd_stop()    { require_docker; compose_cmd stop; ok 'Stopped. The data is untouched.'; }
 # `up -d --force-recreate` rather than `compose restart`, which reuses the containers as
 # they were created and so does *not* re-read `.env`. Somebody who edits a setting and runs
 # `restart` means "pick that up"; the literal reading would leave them staring at an
 # unchanged app, which is the sort of thing that gets blamed on the setting.
-cmd_restart() { require_docker; compose_cmd up -d --force-recreate; wait_for_health; }
+# shellcheck disable=SC2046 # deliberately unquoted: an empty flag must vanish
+cmd_restart() { require_docker; compose_cmd up -d --force-recreate $(no_build_flag); wait_for_health; }
 
 cmd_backup() {
   require_docker
@@ -674,8 +921,9 @@ cmd_backup() {
 Add one of at least 12 characters, then run this again."
   compose_cmd exec -T api node apps/api/dist/cli/backup.js create
   say ''
-  say "Copy it off this machine — a backup on the same disk is not a backup:"
-  say "  ${BOLD}$COMPOSE --project-name $PROJECT_NAME cp api:/var/lib/networth/backups ./backups${RESET}"
+  say "The bundle is on this host, in ${BOLD}$(data_dir)/backups${RESET}."
+  say "Copy it somewhere else — a backup on the same disk is not a backup:"
+  say "  ${BOLD}rsync -a $(data_dir)/backups/ elsewhere:/networth-backups/${RESET}"
 }
 
 cmd_reset() {
@@ -684,7 +932,7 @@ cmd_reset() {
 
   say ''
   say "${RED}${BOLD}Reset destroys every account, asset, document and backup bundle${RESET}"
-  say "in this installation. The data volume is deleted and recreated empty."
+  say "in this installation. Everything under $(data_dir) is deleted."
   say ''
   say "What survives is the configuration: $INSTALL_DIR/.env is kept, so the same"
   say "secrets and the same bootstrap invite code come back — and with no accounts left,"
@@ -704,12 +952,14 @@ Re-run with NETWORTH_CONFIRM_RESET=yes if starting fresh is really what you want
     reset_backup_first
   fi
 
-  step 'Deleting the data volume'
-  compose_cmd down -v
-  ok 'Data volume deleted.'
+  step 'Deleting the data'
+  compose_cmd down --remove-orphans
+  wipe_data_dir
+  ok "$(data_dir) is empty."
 
   step 'Starting fresh'
-  compose_cmd up -d --remove-orphans
+  # shellcheck disable=SC2046 # deliberately unquoted: an empty flag must vanish
+  compose_cmd up -d --remove-orphans $(no_build_flag)
   wait_for_health
 
   local url="http://localhost:$(env_value NETWORTH_HTTP_PORT)"
@@ -725,9 +975,9 @@ Re-run with NETWORTH_CONFIRM_RESET=yes if starting fresh is really what you want
   say "                is nobody registered for it to clash with.${RESET}"
 }
 
-# A bundle written by `backup create` lands *inside* the volume this command is about to
-# delete, so taking one is only half the job: it has to be copied onto the host first or it
-# dies with everything else.
+# A bundle written by `backup create` lands *inside* the directory this command is about to
+# delete, so taking one is only half the job: it has to be moved aside first or it dies with
+# everything else.
 reset_backup_first() {
   if [ -z "$(env_value BACKUP_PASSPHRASE)" ]; then
     warn 'No BACKUP_PASSPHRASE is set, so no backup can be taken. Everything in there is gone.'
@@ -738,7 +988,8 @@ reset_backup_first() {
   confirm 'Take a backup and copy it out first?' 'y' || return
 
   step 'Backing up'
-  compose_cmd up -d >/dev/null 2>&1 || true
+  # shellcheck disable=SC2046 # deliberately unquoted: an empty flag must vanish
+  compose_cmd up -d $(no_build_flag) >/dev/null 2>&1 || true
   wait_for_health
 
   if ! compose_cmd exec -T api node apps/api/dist/cli/backup.js create; then
@@ -749,14 +1000,23 @@ reset_backup_first() {
 
   local dest="$INSTALL_DIR/backups-before-reset-$(date -u '+%Y%m%dT%H%M%SZ')"
   mkdir -p "$dest"
-  if compose_cmd cp api:/var/lib/networth/backups "$dest"; then
+  if cp -a "$(data_dir)/backups/." "$dest/" 2>/dev/null; then
     ok "Bundles copied to $dest"
     say "  ${DIM}Copy that off this machine — nothing else opens a bundle but your passphrase.${RESET}"
   else
     rmdir "$dest" 2>/dev/null || true
-    warn 'Could not copy the bundles out of the volume, so they will be deleted with it.'
+    warn 'Could not copy the bundles out, so they will be deleted with everything else.'
     confirm 'Continue anyway?' 'n' || die 'Stopped. Nothing has changed.'
   fi
+}
+
+# Empties the data directory without removing the directory itself, so the ownership that
+# lets the container write there survives the wipe.
+wipe_data_dir() {
+  local dir; dir="$(data_dir)"
+  [ -d "$dir" ] || { ensure_data_dir; return; }
+  find "$dir" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+  ensure_data_dir
 }
 
 cmd_uninstall() {
@@ -768,18 +1028,18 @@ cmd_uninstall() {
   compose_cmd down --rmi local
   ok 'Stopped and removed.'
   say ''
-  say "${RED}${BOLD}The data volume still exists${RESET} — every account, asset and document is in it."
-  say "Take a backup out of it before you even think about the next question."
+  say "${RED}${BOLD}$(data_dir) still exists${RESET} — every account, asset and document is in it."
+  say "Copy it somewhere else before you even think about the next question."
   say ''
-  if confirm "${RED}Delete the data volume too? This cannot be undone.${RESET}" 'n'; then
+  if confirm "${RED}Delete that directory too? This cannot be undone.${RESET}" 'n'; then
     if confirm 'Really? Type y again to destroy all data.' 'n'; then
-      compose_cmd down -v
-      ok 'Data volume deleted.'
+      rm -rf "$(data_dir)"
+      ok "$(data_dir) deleted."
     else
       say 'Left alone.'
     fi
   else
-    say "Left alone. Reinstalling will pick it back up."
+    say "Left alone. Reinstalling in the same directory will pick it back up."
   fi
 }
 
@@ -790,7 +1050,7 @@ ${BOLD}Net Worth Tracker — deploy${RESET}
   bash $0 [command]
 
   ${BOLD}install${RESET}     download, configure and start  (the default)
-  ${BOLD}upgrade${RESET}     back up, fetch the latest version, rebuild and restart
+  ${BOLD}upgrade${RESET}     back up, fetch the latest release, pull and restart
   ${BOLD}status${RESET}      what is running
   ${BOLD}logs${RESET}        follow the logs
   ${BOLD}backup${RESET}      take an encrypted backup now
@@ -798,9 +1058,16 @@ ${BOLD}Net Worth Tracker — deploy${RESET}
   ${BOLD}reset${RESET}       delete all data and start fresh, keeping the configuration
   ${BOLD}uninstall${RESET}   stop and remove; asks separately about the data
 
+  ${DIM}Everything lives in the install directory: the source, .env, and data/ with the
+  database, the uploads and the backup bundles. Nothing is written to /var.
+  scripts/cleanup.sh removes what older installs left behind there.${RESET}
+
   ${BOLD}Environment${RESET}
     NETWORTH_DIR              where to install       (default \$HOME/networth-tracker)
-    NETWORTH_REF              branch or tag          (default main)
+    NETWORTH_DATA_DIR         where the data lives   (default <install dir>/data)
+    NETWORTH_CHANNEL          release | source       (default release)
+    NETWORTH_VERSION          release to install     (default latest)
+    NETWORTH_REF              branch or tag to build (source channel only, default main)
     NETWORTH_NONINTERACTIVE   accept every default, ask nothing
     NETWORTH_CONFIRM_RESET    set to \`yes\` to allow \`reset\` with no terminal to ask on
 EOF
