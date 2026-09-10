@@ -3,8 +3,9 @@
 A self-hosted net worth tracker built for **Indian households** — every asset and liability
 in one place, and a plan for the day someone else has to claim them.
 
-> **Status:** v1.0.0. Every phase in [`docs/TASKS.md`](docs/TASKS.md) is complete; that file
-> also records what each one deliberately left out and why.
+> **Status:** v1.0.0. Every build phase is complete — [`docs/TASKS.md`](docs/TASKS.md) lists
+> what is still open, and [`docs/DECISIONS.md`](docs/DECISIONS.md) records why each phase is
+> shaped the way it is and what it deliberately left out.
 
 ## Why
 
@@ -268,7 +269,8 @@ deliberately does **not** protect against — before putting real data in it.
 | Document | Contents |
 | -------- | -------- |
 | [PLAN.md](docs/PLAN.md) | The full approved design and build plan |
-| [TASKS.md](docs/TASKS.md) | Phase-by-phase task tracker — done, in progress, pending |
+| [TASKS.md](docs/TASKS.md) | Task tracker — what is open, next and in the backlog |
+| [DECISIONS.md](docs/DECISIONS.md) | Why the shipped code is shaped this way, and what was left out |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Stack, runtime, access control, conventions |
 | [DATA-MODEL.md](docs/DATA-MODEL.md) | Every table and relationship |
 | [SECURITY-MODEL.md](docs/SECURITY-MODEL.md) | Threat model, vault crypto, escrow, limits |

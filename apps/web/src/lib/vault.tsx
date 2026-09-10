@@ -33,6 +33,7 @@ import {
   type VaultStatus,
 } from '@networth/shared';
 import { endpoints } from './endpoints.js';
+import { useSession } from './session.js';
 import type * as VaultCrypto from './vaultCrypto.js';
 
 /**
@@ -82,6 +83,8 @@ export interface EstateKey {
 const VaultContext = createContext<VaultValue | null>(null);
 
 export function VaultProvider({ children }: { children: ReactNode }) {
+  const { status: sessionStatus, user } = useSession();
+  const userId = user?.id ?? null;
   const [state, setState] = useState<VaultState>('loading');
   const [status, setStatus] = useState<VaultStatus | null>(null);
 
@@ -111,9 +114,25 @@ export function VaultProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  /*
+   * `/vault` is an authenticated read, so it can only be asked once there is a session.
+   * Asking earlier gets a 401, which lands in the `catch` above and reports `absent` — a
+   * vault that exists then shows its set-up form, asking for a *new* passphrase, until the
+   * next reload. Keying the effect on the signed-in user also re-reads after a sign-in on
+   * a fresh browser, where the provider mounted while nobody was signed in yet.
+   */
   useEffect(() => {
+    if (sessionStatus === 'loading') return;
+    if (sessionStatus === 'anonymous') {
+      // A sign-out must not leave keys, or the previous user's counts, behind.
+      dek.current = null;
+      privateKey.current = null;
+      setStatus(null);
+      setState('loading');
+      return;
+    }
     void refresh();
-  }, [refresh]);
+  }, [refresh, sessionStatus, userId]);
 
   /* ---------------------------------------------------------------------- */
   /* Idle lock                                                              */
