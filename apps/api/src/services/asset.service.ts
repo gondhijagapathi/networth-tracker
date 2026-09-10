@@ -361,10 +361,19 @@ export function updateTransaction(
     .where(eq(transactions.id, transactionId))
     .run();
 
+  // Every nullable column is spelled out rather than spread. `merged` carries `undefined`
+  // for the fields Zod left optional, and spreading that over the stored row answers with
+  // keys missing from the JSON while the database holds a `null` — so the record returned
+  // by an update disagreed with the one a re-fetch produced.
   return toTransactionRecord({
     ...current,
-    ...merged,
+    date: merged.date,
+    type: merged.type,
+    amountPaise: merged.amountPaise,
+    chargesPaise: merged.chargesPaise,
     units: merged.units ?? null,
+    priceMicro: merged.priceMicro ?? null,
+    notes: merged.notes ?? null,
     updatedAt: now,
   });
 }

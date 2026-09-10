@@ -326,6 +326,31 @@ describe('transactions', () => {
     expect(response.status).toBe(400);
   });
 
+  it('answers an edit with the same row a re-fetch returns', async () => {
+    const created = await owner.post(`/api/assets/${assetId}/transactions`, {
+      date: '2026-05-01',
+      type: 'buy',
+      units: 100_000_000,
+      amountPaise: 10_000_00,
+    });
+
+    const patched = await owner.patch(
+      `/api/assets/${assetId}/transactions/${created.body.transaction.id}`,
+      { amountPaise: 12_000_00 },
+    );
+    expect(patched.status).toBe(200);
+
+    // The columns nobody sent are null in the database, so they must be null in the
+    // response too — not absent because a merged object carried `undefined` into the JSON.
+    const listed = await owner.get(`/api/assets/${assetId}/transactions`);
+    const refetched = listed.body.transactions.find(
+      (row: { id: string }) => row.id === created.body.transaction.id,
+    );
+    expect(patched.body.transaction).toEqual(refetched);
+    expect(patched.body.transaction.notes).toBeNull();
+    expect(patched.body.transaction.priceMicro).toBeNull();
+  });
+
   it('deletes a transaction and writes it to the audit log', async () => {
     const created = await owner.post(`/api/assets/${assetId}/transactions`, {
       date: '2026-05-01',

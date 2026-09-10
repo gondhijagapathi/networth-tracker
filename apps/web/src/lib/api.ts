@@ -80,6 +80,35 @@ async function refreshSession(): Promise<boolean> {
   return refreshing;
 }
 
+/**
+ * Send, and if the access token had expired, refresh once and send again.
+ *
+ * Everything that talks to the API goes through here — JSON and raw bytes alike. A helper
+ * that skipped it would work for the first fifteen minutes of a session and then fail on
+ * exactly the long operations that are hardest to retry by hand: a 10 MB document upload,
+ * or a backup restore that has already streamed half a gigabyte.
+ */
+async function sendWithRefresh(send: () => Promise<Response>, noRetry = false): Promise<Response> {
+  const response = await send();
+  if (!shouldRefresh(response) || noRetry) return response;
+  return (await refreshSession()) ? send() : response;
+}
+
+/**
+ * Whether a 401 means "your token aged out" or "that credential is wrong".
+ *
+ * Only the first is worth refreshing for. A mistyped password and a missing second factor
+ * both answer 401 too, and rotating a perfectly good refresh token because somebody fumbled
+ * the login form spends a credential to learn nothing.
+ */
+function shouldRefresh(response: Response): boolean {
+  if (response.status !== 401) return false;
+  const code = response.headers.get('x-error-code');
+  // The header is advisory: an older server, or a proxy that stripped it, leaves us with
+  // the status alone, and refreshing then is the behaviour this client has always had.
+  return code === null || code === 'unauthenticated';
+}
+
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const method = options.method ?? 'GET';
 
@@ -95,11 +124,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
     });
 
-  let response = await send();
-
-  if (response.status === 401 && options.noRetry !== true && (await refreshSession())) {
-    response = await send();
-  }
+  const response = await sendWithRefresh(send, options.noRetry === true);
 
   if (response.status === 204) return undefined as T;
 
@@ -139,16 +164,18 @@ export const api = {
  * encoding on both sides to find it again.
  */
 export async function upload<T>(path: string, bytes: Uint8Array, meta: unknown): Promise<T> {
-  const response = await fetch(`/api${path}`, {
-    method: 'POST',
-    credentials: 'include',
-    headers: {
-      'content-type': 'application/octet-stream',
-      'x-vault-meta': base64Url(JSON.stringify(meta)),
-      ...csrfHeader(),
-    },
-    body: bytes as BodyInit,
-  });
+  const response = await sendWithRefresh(() =>
+    fetch(`/api${path}`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        'content-type': 'application/octet-stream',
+        'x-vault-meta': base64Url(JSON.stringify(meta)),
+        ...csrfHeader(),
+      },
+      body: bytes as BodyInit,
+    }),
+  );
 
   if (!response.ok) throw await toApiError(response);
   return (await response.json()) as T;
@@ -166,12 +193,14 @@ export async function sendBytes<T>(
   bytes: ArrayBuffer,
   headers: Record<string, string> = {},
 ): Promise<T> {
-  const response = await fetch(`/api${path}`, {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'content-type': 'application/octet-stream', ...headers, ...csrfHeader() },
-    body: bytes,
-  });
+  const response = await sendWithRefresh(() =>
+    fetch(`/api${path}`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'content-type': 'application/octet-stream', ...headers, ...csrfHeader() },
+      body: bytes,
+    }),
+  );
 
   if (!response.ok) throw await toApiError(response);
   return (await response.json()) as T;
@@ -179,7 +208,7 @@ export async function sendBytes<T>(
 
 /** Fetch a document's ciphertext. The caller decrypts it; this never sees a plaintext. */
 export async function binary(path: string): Promise<ArrayBuffer> {
-  const response = await fetch(`/api${path}`, { credentials: 'include' });
+  const response = await sendWithRefresh(() => fetch(`/api${path}`, { credentials: 'include' }));
   if (!response.ok) throw await toApiError(response);
   return response.arrayBuffer();
 }

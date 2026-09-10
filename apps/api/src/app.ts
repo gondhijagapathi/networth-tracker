@@ -61,6 +61,11 @@ export function createApp(ctx: AppContext): Express {
     cors({
       origin: config.CORS_ORIGIN.split(',').map((o) => o.trim()),
       credentials: true,
+      // A browser hides every response header from cross-origin script unless it is named
+      // here. Development proxies `/api` through Vite so this never bites there, which is
+      // exactly why it has to be written down: the headers the client actually reads are
+      // not obvious from a same-origin session.
+      exposedHeaders: ['X-Error-Code', 'X-Document-Sha256', 'Retry-After'],
     }),
   );
 

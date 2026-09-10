@@ -9,6 +9,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { PublicUser } from '@networth/shared';
+import { generateInviteCode } from '../services/invite.service.js';
 import {
   TEST_PASSPHRASE,
   TestClient,
@@ -61,6 +62,27 @@ describe('invites', () => {
     // The listing shows the invite but never the code.
     const listed = await admin.get('/api/admin/invites');
     expect(JSON.stringify(listed.body)).not.toContain(code);
+  });
+
+  it('draws invite code characters uniformly from its alphabet', () => {
+    const alphabet = 'ABCDEFGHJKMNPQRSTVWXYZ23456789';
+    const counts = new Map<string, number>();
+
+    for (let i = 0; i < 2_000; i += 1) {
+      for (const character of generateInviteCode().replace(/-/g, '')) {
+        counts.set(character, (counts.get(character) ?? 0) + 1);
+      }
+    }
+
+    // Every letter appears, and none is favoured. Reducing a random byte modulo 30 would
+    // hand the first sixteen letters an extra 12.5% of the draws, which over 40,000
+    // characters is far outside the spread sampling noise can produce.
+    expect([...counts.keys()].sort().join('')).toBe([...alphabet].sort().join(''));
+
+    const expected = (2_000 * 20) / alphabet.length;
+    for (const [character, count] of counts) {
+      expect(Math.abs(count - expected) / expected, `skew on ${character}`).toBeLessThan(0.1);
+    }
   });
 
   it('records who consumed an invite', async () => {

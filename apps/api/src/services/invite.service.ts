@@ -44,11 +44,31 @@ export function hashInviteCode(code: string): string {
   return createHash('sha256').update(normaliseInviteCode(code)).digest('base64url');
 }
 
-/** A fresh code in `ABCDE-FGHJK-MNPQR-STVWX` form. ~98 bits of entropy. */
+/**
+ * A fresh code in `ABCDE-FGHJK-MNPQR-STVWX` form. Twenty characters over a 30-character
+ * alphabet, so a shade over 98 bits of entropy.
+ *
+ * Rejection-sampled rather than reduced modulo the alphabet. 256 is not a multiple of 30,
+ * so `byte % 30` would hand the first sixteen letters a 9/256 chance and the rest 8/256 —
+ * a small bias, but the "~98 bits" above is only true without it, and a skewed alphabet is
+ * the kind of thing nobody re-derives once it is written down as fact.
+ */
 export function generateInviteCode(): string {
-  const bytes = new Uint8Array(GROUPS * GROUP_LENGTH);
-  crypto.getRandomValues(bytes);
-  const chars = [...bytes].map((byte) => CODE_ALPHABET[byte % CODE_ALPHABET.length]);
+  // The largest multiple of the alphabet that fits in a byte. Anything at or above it is
+  // discarded and redrawn, which is what makes the remaining values uniform.
+  const limit = 256 - (256 % CODE_ALPHABET.length);
+  const chars: string[] = [];
+
+  while (chars.length < GROUPS * GROUP_LENGTH) {
+    const batch = new Uint8Array(GROUPS * GROUP_LENGTH);
+    crypto.getRandomValues(batch);
+    for (const byte of batch) {
+      if (byte >= limit) continue;
+      chars.push(CODE_ALPHABET[byte % CODE_ALPHABET.length]!);
+      if (chars.length === GROUPS * GROUP_LENGTH) break;
+    }
+  }
+
   return Array.from({ length: GROUPS }, (_, group) =>
     chars.slice(group * GROUP_LENGTH, (group + 1) * GROUP_LENGTH).join(''),
   ).join('-');

@@ -224,7 +224,10 @@ describe('nominations', () => {
 
     expect((await estate.heir.get('/api/assets')).body.assets).toHaveLength(0);
     expect((await estate.heir.get('/api/estate')).body.estates).toHaveLength(0);
-    expect((await estate.heir.post(`/api/estate/${owner.user!.id}/key`)).status).toBe(403);
+    // 404, the same answer `/items` has always given once the nomination is gone: with no
+    // live nomination there is no estate to speak of, and both routes now say so through
+    // the one gate rather than each reaching its own conclusion.
+    expect((await estate.heir.post(`/api/estate/${owner.user!.id}/key`)).status).toBe(404);
   });
 });
 
@@ -275,6 +278,26 @@ describe('escrow', () => {
     // The escrow is open but the nomination never granted vault access. Both locks have to
     // be open, and this one is not.
     expect((await estate.heir.get(`/api/estate/${owner.user!.id}/items`)).status).toBe(403);
+
+    // And the key itself, which is the half that matters: refusing the ciphertext while
+    // handing over the key that opens it protects nothing the moment the heir gets hold of
+    // a backup bundle or the access level is widened later.
+    expect((await estate.heir.post(`/api/estate/${owner.user!.id}/key`)).status).toBe(403);
+    const listed = await estate.heir.get('/api/estate');
+    expect(listed.body.estates[0]).toMatchObject({ escrowState: 'released', wrappedDek: null });
+  });
+
+  it('withdraws a released key when the owner narrows access below the vault', async () => {
+    const estate = await establishEstate();
+    await sealFor(estate);
+    await owner.post(`/api/nominees/${estate.nomineeId}/release`);
+    expect((await estate.heir.post(`/api/estate/${owner.user!.id}/key`)).status).toBe(200);
+
+    await owner.patch(`/api/nominees/${estate.nomineeId}`, { accessLevel: 'full' });
+
+    expect((await estate.heir.post(`/api/estate/${owner.user!.id}/key`)).status).toBe(403);
+    const listed = await estate.heir.get('/api/estate');
+    expect(listed.body.estates[0]).toMatchObject({ escrowState: 'revoked', wrappedDek: null });
   });
 
   it('will not seal to a nominee who has not accepted or has no vault', async () => {
