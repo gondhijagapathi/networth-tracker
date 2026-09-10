@@ -38,6 +38,7 @@ import {
   financialYearOf,
   isLiabilityType,
   maturityValue,
+  monthlyOn,
   monthsHeld,
   scheduleContributions,
   taxRatesFor,
@@ -786,12 +787,6 @@ function recurring(anchor: string, from: string, to: string, everyMonths: number
     cursor = addMonths(cursor, everyMonths);
   }
   return dates;
-}
-
-/** The nth of each month inside the window. */
-function monthlyOn(day: number, from: string, to: string): string[] {
-  const anchor = `${from.slice(0, 7)}-${String(day).padStart(2, '0')}`;
-  return recurring(anchor < from ? addMonths(anchor, 1) : anchor, from, to, 1);
 }
 
 /** An `MM-DD` that recurs every year. */

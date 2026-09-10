@@ -13,11 +13,14 @@ import type {
   AssetStatus,
   AssetSummary,
   AssetType,
+  BackfillSipBody,
   CreateAssetBody,
   CreateInstrumentBody,
   CreateTransactionBody,
   CreateValuationBody,
   DashboardResponse,
+  DisableTotpBody,
+  EnrolTotpBody,
   InstrumentRecord,
   NetWorthPoint,
   PerformanceEntry,
@@ -124,6 +127,12 @@ export const endpoints = {
 
   addTransaction: (id: string, body: CreateTransactionBody) =>
     api.post<{ transaction: TransactionRecord }>(`/assets/${id}/transactions`, body),
+
+  backfillSip: (id: string, body: BackfillSipBody) =>
+    api.post<{ created: TransactionRecord[]; skipped: number }>(
+      `/assets/${id}/transactions/sip`,
+      body,
+    ),
 
   deleteTransaction: (id: string, transactionId: string) =>
     api.delete<void>(`/assets/${id}/transactions/${transactionId}`),
@@ -296,6 +305,23 @@ export const endpoints = {
   sendTestEmail: () => api.post<MailTestResult>('/admin/mail/test'),
 
   retryEmail: (id: string) => api.post<MailStatus>(`/admin/mail/${id}/retry`),
+
+  /* ---------------------------------------------------------------------- */
+  /* Two-factor authentication                                              */
+  /* ---------------------------------------------------------------------- */
+
+  /** How many recovery codes are left, alongside the signed-in user. */
+  me: (signal?: AbortSignal) =>
+    api.get<{ user: PublicUser; recoveryCodesRemaining: number }>('/auth/me', signal),
+
+  /** Hands back a fresh secret. Enrolment is only real once a live code confirms it. */
+  beginTotpEnrolment: () => api.post<{ secret: string; uri: string }>('/auth/2fa/enrol'),
+
+  /** The recovery codes come back exactly once; no endpoint can return them again. */
+  confirmTotpEnrolment: (body: EnrolTotpBody) =>
+    api.post<{ recoveryCodes: string[] }>('/auth/2fa/enrol/confirm', body),
+
+  disableTotp: (body: DisableTotpBody) => api.post<void>('/auth/2fa/disable', body),
 
   /* ---------------------------------------------------------------------- */
   /* Password reset                                                         */

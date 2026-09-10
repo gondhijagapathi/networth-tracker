@@ -15,10 +15,12 @@ import { eq } from 'drizzle-orm';
 import {
   assetDetailSchemas,
   createTransactionSchema,
+  monthlyOn,
   uuidv7,
   type AssetQuery,
   type AssetRecord,
   type AssetSummary,
+  type BackfillSipBody,
   type CreateAssetBody,
   type CreateTransactionBody,
   type CreateValuationBody,
@@ -316,6 +318,73 @@ export function addTransaction(
 
   ctx.db.insert(transactions).values(row).run();
   return toTransactionRecord(row);
+}
+
+/** The most instalments one backfill will write: fifty years of a monthly SIP. */
+const MAX_BACKFILL_MONTHS = 600;
+
+/**
+ * Write the instalments of a monthly SIP that were never entered one at a time.
+ *
+ * Returns of a SIP are a question about *when* each instalment was paid, so the only honest
+ * alternative to forty-eight rows is forty-eight rows. This writes them from the three
+ * things the owner actually knows — the amount, the day it debits, and the window it ran —
+ * and skips any month that already carries a `sip` row, so running it twice, or extending
+ * the window later, adds the missing months instead of doubling the invested figure.
+ *
+ * Units are deliberately absent. Each instalment bought whatever that day's NAV allowed,
+ * and inventing a split would put a made-up number in the cost basis; the holding's own
+ * unit count stays the record of what is owned.
+ */
+export function backfillSip(
+  ctx: AppContext,
+  scope: Scope,
+  assetId: string,
+  body: BackfillSipBody,
+): { created: TransactionRecord[]; skipped: number } {
+  const asset = writableAsset(ctx, scope, assetId);
+  if (asset.type !== 'holding') {
+    throw badRequest('Only a fund or share has SIP instalments to fill in');
+  }
+
+  const to = body.to ?? isoNow(ctx.now()).slice(0, 10);
+  const dates = monthlyOn(body.day, body.from, to);
+  if (dates.length === 0) throw badRequest('No SIP date falls inside those dates');
+  if (dates.length > MAX_BACKFILL_MONTHS) {
+    throw badRequest(`That is ${dates.length} instalments — narrow the dates and repeat`);
+  }
+
+  const taken = new Set(
+    transactionHistory(ctx, assetId)
+      .filter((row) => row.type === 'sip')
+      .map((row) => row.date),
+  );
+  const now = isoNow(ctx.now());
+  const rows: TransactionRow[] = dates
+    .filter((date) => !taken.has(date))
+    .map((date) => ({
+      id: uuidv7(ctx.now().getTime()),
+      assetId,
+      date,
+      type: 'sip' as const,
+      units: null,
+      amountPaise: body.amountPaise,
+      priceMicro: null,
+      chargesPaise: body.chargesPaise,
+      notes: null,
+      createdAt: now,
+      updatedAt: now,
+    }));
+
+  // One transaction, so a half-written SIP history can never be what a return is computed
+  // from: either every missing month lands or none does.
+  if (rows.length > 0) {
+    ctx.db.transaction((tx) => {
+      for (const row of rows) tx.insert(transactions).values(row).run();
+    });
+  }
+
+  return { created: rows.map(toTransactionRecord), skipped: dates.length - rows.length };
 }
 
 /**

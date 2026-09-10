@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Fill in SIP months.** A running SIP is one identical transaction a month, and nobody
+  types forty-eight of those by hand — so what actually gets recorded is a single lump sum,
+  which prices every instalment as if it were paid on the first day and reports an XIRR that
+  is not merely rough but wrong. The asset page now takes the instalment, the day it debits
+  and the window it ran, and writes the months itself. Months already carrying a `sip` row
+  are skipped, so a re-run or a widened window adds what is missing rather than doubling the
+  invested figure, and the whole set lands in one database transaction. Units are not split
+  across the instalments: each bought whatever that day's NAV allowed, and a made-up share
+  would be a made-up cost basis.
+- **A screen to turn two-factor authentication on.** The TOTP machinery — enrol, confirm,
+  disable, recovery codes, and a sign-in form that asks for a code — has been complete since
+  P1, but nothing in the interface could reach it, which means the installation did not
+  really have it. Settings now runs the enrolment conversation, confirms a live code before
+  switching anything on, and shows the recovery codes once, on their own. The QR is drawn in
+  the browser from an encoder imported on demand: an `otpauth` URI carries the secret, so it
+  never goes to a rendering service, and the main bundle does not carry the encoder for the
+  sessions that never enrol.
+
 - `scripts/deploy.sh`, one command that installs, configures, upgrades and operates a
   container deployment. It checks Docker is present and reachable, downloads the source,
   generates the three secrets itself, asks only the four questions that have no safe default

@@ -375,6 +375,71 @@ describe('transactions', () => {
     expect(audit?.entity_id).toBe(transactionId);
   });
 
+  it('fills a SIP window with one instalment per month', async () => {
+    const response = await owner.post(`/api/assets/${assetId}/transactions/sip`, {
+      amountPaise: 5_000_00,
+      day: 5,
+      from: '2026-01-01',
+      to: '2026-04-30',
+    });
+
+    expect(response.status, response.text).toBe(201);
+    expect(response.body.created.map((row: { date: string }) => row.date)).toEqual([
+      '2026-01-05',
+      '2026-02-05',
+      '2026-03-05',
+      '2026-04-05',
+    ]);
+    expect(response.body.created.every((row: { type: string }) => row.type === 'sip')).toBe(true);
+
+    const performance = await owner.get(`/api/assets/${assetId}/performance`);
+    expect(performance.body.performance.investedPaise).toBe(20_000_00);
+  });
+
+  it('leaves months it has already written alone when the window is extended', async () => {
+    await owner.post(`/api/assets/${assetId}/transactions/sip`, {
+      amountPaise: 5_000_00,
+      day: 5,
+      from: '2026-01-01',
+      to: '2026-02-28',
+    });
+
+    const again = await owner.post(`/api/assets/${assetId}/transactions/sip`, {
+      amountPaise: 5_000_00,
+      day: 5,
+      from: '2026-01-01',
+      to: '2026-04-30',
+    });
+
+    expect(again.body.skipped).toBe(2);
+    expect(again.body.created).toHaveLength(2);
+
+    // The point of skipping: running it twice must not double what was invested.
+    const performance = await owner.get(`/api/assets/${assetId}/performance`);
+    expect(performance.body.performance.investedPaise).toBe(20_000_00);
+  });
+
+  it('refuses a SIP backfill on an asset that has no instalments', async () => {
+    const deposit = await owner.post('/api/assets', sampleAssetBody('deposit'));
+    const response = await owner.post(`/api/assets/${deposit.body.asset.id}/transactions/sip`, {
+      amountPaise: 5_000_00,
+      day: 5,
+      from: '2026-01-01',
+      to: '2026-04-30',
+    });
+    expect(response.status).toBe(400);
+  });
+
+  it('refuses a window that ends before it starts', async () => {
+    const response = await owner.post(`/api/assets/${assetId}/transactions/sip`, {
+      amountPaise: 5_000_00,
+      day: 5,
+      from: '2026-04-01',
+      to: '2026-01-01',
+    });
+    expect(response.status).toBe(400);
+  });
+
   it('refuses a transaction id belonging to another asset', async () => {
     const other = await owner.post('/api/assets', sampleAssetBody('deposit'));
     const created = await owner.post(`/api/assets/${assetId}/transactions`, {
