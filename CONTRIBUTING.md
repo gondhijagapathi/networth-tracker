@@ -55,8 +55,12 @@ your branch.
 ## Keeping the tracker current
 
 **Update [`docs/TASKS.md`](docs/TASKS.md) in the same commit as the work it describes.** A
-task is only done when its checkbox is ticked and its tests pass. This file is how the
-project's state stays legible.
+task is only done when its checkbox is ticked and its tests pass, and a line is dropped once
+the release carrying it is cut — that file tracks what is left, and the git log holds what
+was done.
+
+A decision worth keeping — why something is shaped this way, or why it was left out — goes in
+[`docs/DECISIONS.md`](docs/DECISIONS.md) instead, where it outlives the checkbox.
 
 ## Code conventions
 

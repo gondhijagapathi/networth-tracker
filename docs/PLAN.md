@@ -36,7 +36,7 @@ networth-tracker/
 ├── packages/
 │   └── shared/              zod schemas, TS types, money/XIRR/FY utils (imported by both)
 ├── data/                    gitignored — networth.db, uploads/, backups/
-├── docs/                    PLAN.md, TASKS.md, ARCHITECTURE.md, SECURITY-MODEL.md,
+├── docs/                    PLAN.md, TASKS.md, DECISIONS.md, ARCHITECTURE.md, SECURITY-MODEL.md,
 │                            BACKUP.md, DATA-MODEL.md, INDIA-NOTES.md
 └── .github/                 workflows/ci.yml, PR + issue templates
 ```
@@ -156,7 +156,8 @@ Argon2id password hashing · short-lived access JWT in httpOnly `SameSite=Strict
 
 ## Build phases
 
-Tracked as checkboxes in `docs/TASKS.md`, kept current as work lands.
+All ten phases shipped in v1.0.0. `docs/TASKS.md` now tracks open work only, and
+`docs/DECISIONS.md` records what each phase decided and deferred.
 
 | Phase | Deliverable |
 |---|---|

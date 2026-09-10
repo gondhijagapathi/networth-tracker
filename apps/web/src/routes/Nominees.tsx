@@ -553,8 +553,9 @@ function DeadManCard({ status, onChanged }: { status: DeadManStatus; onChanged: 
       )}
 
       <p className="mt-3 text-xs" style={{ color: 'var(--text-muted)' }}>
-        Warnings at 50%, 75% and 90% of the window are recorded and shown here. This build has no
-        mail transport, so they are not emailed — see the note in docs/TASKS.md.
+        Warnings at 50%, 75% and 90% of the window are emailed to you, and also recorded and shown
+        here. On an instance with no SMTP configured the email is suppressed and this page is the
+        only warning — the admin Email panel says which one applies.
       </p>
 
       {error !== null && <ErrorNotice message={error} />}
