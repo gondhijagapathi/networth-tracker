@@ -1,8 +1,8 @@
 {
   "name": "networth-tracker",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
-  "description": "Self-hosted, multi-user net worth tracker built for Indian households \u2014 assets, liabilities, nomination hygiene and an encrypted claim vault.",
+  "description": "Self-hosted, multi-user net worth tracker built for Indian households — assets, liabilities, nomination hygiene and an encrypted claim vault.",
   "license": "MIT",
   "type": "module",
   "engines": {

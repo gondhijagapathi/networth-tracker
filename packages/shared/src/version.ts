@@ -8,4 +8,4 @@
  * has to be bumped by hand. `npm version` bumps the packages; this is bumped in the same
  * commit, and `version.test.ts` fails if the two drift apart.
  */
-export const APP_VERSION = '1.0.0';
+export const APP_VERSION = '1.1.0';
