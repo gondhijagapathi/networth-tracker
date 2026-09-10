@@ -209,6 +209,7 @@ bash networth-deploy.sh status      # what is running
 bash networth-deploy.sh logs        # follow them
 bash networth-deploy.sh backup      # an encrypted bundle, now
 bash networth-deploy.sh upgrade     # back up, fetch, rebuild, restart
+bash networth-deploy.sh reset       # delete all data and start fresh, keeping the configuration
 bash networth-deploy.sh uninstall   # stop and remove; asks separately about the data
 ```
 
@@ -219,6 +220,7 @@ Two environment variables steer it:
 | `NETWORTH_DIR` | `$HOME/networth-tracker` | Where the source lives |
 | `NETWORTH_REF` | `main` | Branch or tag to deploy |
 | `NETWORTH_NONINTERACTIVE` | unset | Accept every default, ask nothing |
+| `NETWORTH_CONFIRM_RESET` | unset | Set to `yes` to allow `reset` when there is no terminal to ask on |
 
 `upgrade` takes a backup **before** it fetches anything. Migrations run at boot and are not
 reversible, so that is the only moment a bundle can still capture the old shape of the data.
@@ -226,6 +228,26 @@ If no `BACKUP_PASSPHRASE` is set it says so and asks whether to continue. It the
 the checkout — that directory is a deployment, not somewhere to keep local commits — and
 reports any new settings the upgrade introduced, adding the ones that have a sane default
 and naming the ones that do not rather than writing a placeholder into your configuration.
+
+### Starting over
+
+`reset` is for the installation you were only ever trying out: the one seeded with test
+assets, or the one whose first admin account is an email address you no longer want. It
+deletes the data volume — every account, asset, uploaded document and backup bundle — then
+recreates it empty and starts the stack again.
+
+It keeps `.env`, which is the point. The same secrets and the same `BOOTSTRAP_INVITE_CODE`
+come back, and with no accounts left for it to clash with, that code opens registration
+again for a new first admin. Nothing has to be reconfigured.
+
+It asks twice before doing anything, and offers to take a backup first — copying the bundles
+out to `backups-before-reset-<timestamp>/` in the install directory, because a bundle written
+into the volume would be destroyed along with it. There is no terminal to ask on in a script,
+so a non-interactive run refuses unless `NETWORTH_CONFIRM_RESET=yes` is set, and that run
+takes no backup.
+
+If what you want is to keep the data and remove the software, that is `uninstall`, which asks
+about the volume separately and leaves it in place by default.
 
 ### The long way
 

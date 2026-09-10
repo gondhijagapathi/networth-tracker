@@ -68,7 +68,16 @@ export function Dashboard() {
 
   if (error !== null) return <ErrorNotice message={error.message} onRetry={reload} />;
 
-  if (data === null || loading) {
+  /*
+   * Skeletons only on the *first* load.
+   *
+   * Changing the window or the allocation dimension refetches, and tearing the whole page
+   * down to skeletons for that read as a full page reload — the header, the summary and the
+   * risk panel all disappear to answer a question about one chart. `useResource` keeps the
+   * previous data through a refetch, so the page stays on screen and only reports that it is
+   * busy while the new numbers arrive.
+   */
+  if (data === null) {
     return (
       <div className="space-y-4">
         <Skeleton className="h-32" />
@@ -82,7 +91,11 @@ export function Dashboard() {
   const nothingYet = summary.assetCount === 0 && summary.liabilityCount === 0;
 
   return (
-    <div className="space-y-4">
+    <div
+      className="space-y-4 transition-opacity"
+      aria-busy={loading}
+      style={{ opacity: loading ? 0.6 : 1 }}
+    >
       <PageHeader title="Dashboard" subtitle={`As at ${formatDate(summary.asOf)}`} />
 
       {nothingYet ? (
