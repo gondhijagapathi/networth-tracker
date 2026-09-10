@@ -9,10 +9,10 @@
 #
 #     bash deploy.sh              install, or upgrade an existing installation
 #     bash deploy.sh upgrade      upgrade explicitly (refuses if nothing is installed)
-#     bash deploy.sh status|logs|backup|start|stop|restart|uninstall
+#     bash deploy.sh status|logs|backup|start|stop|restart|reset|uninstall
 #
-# It is safe to re-run. Your `.env` is never overwritten and the data volume is never
-# touched except by `uninstall`, which asks first.
+# It is safe to re-run. Your `.env` is never overwritten, and the data volume is never
+# touched except by `reset` and `uninstall`, both of which ask first.
 
 set -euo pipefail
 
@@ -678,6 +678,87 @@ Add one of at least 12 characters, then run this again."
   say "  ${BOLD}$COMPOSE --project-name $PROJECT_NAME cp api:/var/lib/networth/backups ./backups${RESET}"
 }
 
+cmd_reset() {
+  require_docker
+  is_installed || die "Nothing is installed in $INSTALL_DIR."
+
+  say ''
+  say "${RED}${BOLD}Reset destroys every account, asset, document and backup bundle${RESET}"
+  say "in this installation. The data volume is deleted and recreated empty."
+  say ''
+  say "What survives is the configuration: $INSTALL_DIR/.env is kept, so the same"
+  say "secrets and the same bootstrap invite code come back — and with no accounts left,"
+  say "that code opens registration again for a new first admin."
+  say ''
+
+  if [ "$INTERACTIVE" -eq 0 ]; then
+    # `confirm` answers with its default when there is nobody to ask, and a default that can
+    # wipe somebody's data is not a default. An explicit variable is the only way through.
+    [ "${NETWORTH_CONFIRM_RESET:-}" = 'yes' ] || die \
+"Refusing to delete the data without a confirmation, and there is no terminal to ask on.
+Re-run with NETWORTH_CONFIRM_RESET=yes if starting fresh is really what you want."
+    warn 'Non-interactive: no backup is taken before the wipe.'
+  else
+    confirm "${RED}Delete all data and start fresh?${RESET}" 'n' || die 'Stopped. Nothing has changed.'
+    confirm 'Really? This cannot be undone. Type y again.' 'n' || die 'Stopped. Nothing has changed.'
+    reset_backup_first
+  fi
+
+  step 'Deleting the data volume'
+  compose_cmd down -v
+  ok 'Data volume deleted.'
+
+  step 'Starting fresh'
+  compose_cmd up -d --remove-orphans
+  wait_for_health
+
+  local url="http://localhost:$(env_value NETWORTH_HTTP_PORT)"
+  [ "$(env_value COOKIE_SECURE)" = 'true' ] && [ -n "$(env_value APP_BASE_URL)" ] \
+    && url="$(env_value APP_BASE_URL)"
+
+  say ''
+  ok 'Empty installation running.'
+  say ''
+  say "  Open          ${BOLD}$url${RESET}"
+  say "  Register with ${BOLD}$(env_value BOOTSTRAP_INVITE_CODE)${RESET}"
+  say "                ${DIM}The same code as the first install — it works again because there"
+  say "                is nobody registered for it to clash with.${RESET}"
+}
+
+# A bundle written by `backup create` lands *inside* the volume this command is about to
+# delete, so taking one is only half the job: it has to be copied onto the host first or it
+# dies with everything else.
+reset_backup_first() {
+  if [ -z "$(env_value BACKUP_PASSPHRASE)" ]; then
+    warn 'No BACKUP_PASSPHRASE is set, so no backup can be taken. Everything in there is gone.'
+    confirm 'Continue anyway?' 'n' || die 'Stopped. Nothing has changed.'
+    return
+  fi
+
+  confirm 'Take a backup and copy it out first?' 'y' || return
+
+  step 'Backing up'
+  compose_cmd up -d >/dev/null 2>&1 || true
+  wait_for_health
+
+  if ! compose_cmd exec -T api node apps/api/dist/cli/backup.js create; then
+    warn 'The backup failed.'
+    confirm 'Continue without one?' 'n' || die 'Stopped. Nothing has changed.'
+    return
+  fi
+
+  local dest="$INSTALL_DIR/backups-before-reset-$(date -u '+%Y%m%dT%H%M%SZ')"
+  mkdir -p "$dest"
+  if compose_cmd cp api:/var/lib/networth/backups "$dest"; then
+    ok "Bundles copied to $dest"
+    say "  ${DIM}Copy that off this machine — nothing else opens a bundle but your passphrase.${RESET}"
+  else
+    rmdir "$dest" 2>/dev/null || true
+    warn 'Could not copy the bundles out of the volume, so they will be deleted with it.'
+    confirm 'Continue anyway?' 'n' || die 'Stopped. Nothing has changed.'
+  fi
+}
+
 cmd_uninstall() {
   require_docker
   is_installed || die "Nothing is installed in $INSTALL_DIR."
@@ -714,12 +795,14 @@ ${BOLD}Net Worth Tracker — deploy${RESET}
   ${BOLD}logs${RESET}        follow the logs
   ${BOLD}backup${RESET}      take an encrypted backup now
   ${BOLD}start${RESET} / ${BOLD}stop${RESET} / ${BOLD}restart${RESET}   restart also picks up .env changes
+  ${BOLD}reset${RESET}       delete all data and start fresh, keeping the configuration
   ${BOLD}uninstall${RESET}   stop and remove; asks separately about the data
 
   ${BOLD}Environment${RESET}
     NETWORTH_DIR              where to install       (default \$HOME/networth-tracker)
     NETWORTH_REF              branch or tag          (default main)
     NETWORTH_NONINTERACTIVE   accept every default, ask nothing
+    NETWORTH_CONFIRM_RESET    set to \`yes\` to allow \`reset\` with no terminal to ask on
 EOF
 }
 
@@ -733,6 +816,7 @@ main() {
     start)           cmd_start ;;
     stop)            cmd_stop ;;
     restart)         cmd_restart ;;
+    reset)           cmd_reset ;;
     uninstall)       cmd_uninstall ;;
     -h|--help|help)  usage ;;
     *)               usage; die "Unknown command: $1" ;;

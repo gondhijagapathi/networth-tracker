@@ -168,8 +168,18 @@ export function AppShell({ children }: { children: ReactNode }) {
         Skip to content
       </a>
 
+      {/*
+       * The sidebar is pinned, not scrolled.
+       *
+       * `sticky top-0` with its own `h-dvh` keeps the destinations in place while the
+       * numbers scroll past them — a person checking a long asset list should not have to
+       * scroll back up to change section. The explicit height also stops the flex container
+       * stretching it, which is what would otherwise make `sticky` a no-op here, and
+       * `overflow-y-auto` gives the list its own scroll on a short window rather than
+       * cutting the controls off at the bottom.
+       */}
       <aside
-        className="hidden lg:flex lg:w-56 lg:shrink-0 lg:flex-col lg:gap-1 lg:border-r lg:px-3 lg:py-5"
+        className="hidden lg:sticky lg:top-0 lg:flex lg:h-dvh lg:w-56 lg:shrink-0 lg:flex-col lg:gap-1 lg:overflow-y-auto lg:border-r lg:px-3 lg:py-5"
         style={{ background: 'var(--surface-sunken)' }}
       >
         <div className="mb-4 px-2">
