@@ -32,6 +32,10 @@ export function errorHandler(options: { exposeStack: boolean }): ErrorRequestHan
       if (error.retryAfterSeconds !== undefined) {
         res.setHeader('Retry-After', String(error.retryAfterSeconds));
       }
+      // The same code the body carries, in a header, so a client can read it without
+      // consuming the body. Three of these codes are 401s that mean quite different things,
+      // and the browser client refreshes its token for one of them and not the others.
+      res.setHeader('X-Error-Code', error.code);
       return res.status(error.status).json({
         error: { code: error.code, message: error.message, details: error.details },
       } satisfies ErrorBody);

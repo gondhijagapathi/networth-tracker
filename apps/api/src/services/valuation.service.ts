@@ -66,11 +66,16 @@ const NOTHING: Candidate = { valuePaise: 0, basis: 'none', asOf: null };
  * this morning should see fifteen years of PPF on the chart, not a flat line and a cliff.
  * And it stopped counting when it was closed; for a row archived without a closing date,
  * the archival itself is the best evidence of when it stopped being real.
+ *
+ * Both bounds are inclusive. An FD closed on 31 March was something the household owned on
+ * 31 March — the money arrived that day — so the closing date is the last date it counts,
+ * not the first date it does not. Treating one end as inclusive and the other as exclusive
+ * dropped a closed asset out of the chart's own closing-day point.
  */
 export function existedOn(facts: { asset: AssetRow; beganOn: string }, asOf: string): boolean {
   if (facts.beganOn > asOf) return false;
   if (facts.asset.status === 'active') return true;
-  return (facts.asset.closedOn ?? facts.asset.updatedAt.slice(0, 10)) > asOf;
+  return (facts.asset.closedOn ?? facts.asset.updatedAt.slice(0, 10)) >= asOf;
 }
 
 /** Value every asset the caller can see, as of a date. */

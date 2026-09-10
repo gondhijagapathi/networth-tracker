@@ -16,7 +16,7 @@
  * mistake in either can produce that outcome on its own.
  */
 
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, isNull, ne } from 'drizzle-orm';
 import {
   publicKeyFingerprint,
   uuidv7,
@@ -148,6 +148,23 @@ export function updateNominee(
   if (body.accessLevel !== undefined && updated.nomineeUserId && updated.status === 'accepted') {
     revokeGrantsFor(ctx, ownerUserId, id);
     grantAccess(ctx, ownerUserId, updated.nomineeUserId, body.accessLevel, id);
+  }
+
+  // Narrowing away from `vault` withdraws the escrow with it. Leaving the row released
+  // would keep the wrapped key servable to somebody the owner has just decided should not
+  // have it — the same reason `revokeNominee` closes the escrow rather than only the grant.
+  // The honest limit is the one revocation already carries: an heir who fetched the key
+  // before this moment holds a copy, and only re-keying the vault takes that back.
+  if (
+    body.accessLevel !== undefined &&
+    body.accessLevel !== 'vault' &&
+    existing.accessLevel === 'vault'
+  ) {
+    ctx.db
+      .update(vaultEscrow)
+      .set({ state: 'revoked', revokedAt: now, updatedAt: now })
+      .where(and(eq(vaultEscrow.nomineeId, id), ne(vaultEscrow.state, 'revoked')))
+      .run();
   }
 
   recordAudit(ctx, {
@@ -304,6 +321,11 @@ export async function sealEscrow(
   if (nominee.status !== 'accepted' || !nominee.nomineeUserId) {
     throw badRequest('This nominee has not accepted their invite yet');
   }
+  // Deliberately *not* gated on `accessLevel === 'vault'`. An owner may reasonably seal a
+  // key before deciding how much access to grant, and the order they do those two things in
+  // is theirs to choose. What must never happen is the key being served to somebody the
+  // access level does not cover, and that is enforced where the key is handed out rather
+  // than where it is stored — see `vaultIsOpen`.
 
   const key = ctx.db
     .select({ publicKeyJwk: vaultKeys.publicKeyJwk })
@@ -471,9 +493,10 @@ export function sealedEscrows(ctx: AppContext, ownerUserId: string): VaultEscrow
 /**
  * The estates this user has been named in.
  *
- * `wrappedDek` is present only on a released escrow. That is the single line in this file
- * where the server decides whether an heir can read a household's passwords, which is why
- * it is a `case` on state rather than a filter somewhere upstream.
+ * `wrappedDek` is present only when {@link vaultIsOpen} says both locks are open: the
+ * nomination carries `vault` access, and the escrow has been released. The state alone is
+ * not enough — an escrow sealed to a `summary` heir, or one whose nomination was later
+ * narrowed, is released and still not theirs to open.
  */
 export function listEstates(ctx: AppContext, granteeUserId: string): EstateSummary[] {
   const rows = ctx.db
@@ -495,9 +518,20 @@ export function listEstates(ctx: AppContext, granteeUserId: string): EstateSumma
     relation: nominee.relation,
     accessLevel: nominee.accessLevel as NomineeAccessLevel,
     escrowState: escrow?.state ?? null,
-    wrappedDek: escrow?.state === 'released' ? escrow.wrappedDek : null,
+    wrappedDek: vaultIsOpen(nominee.accessLevel, escrow?.state ?? null) ? escrow!.wrappedDek : null,
     releasedAt: escrow?.releasedAt ?? null,
   }));
+}
+
+/**
+ * Both locks, in one place.
+ *
+ * The access level is the owner's stated intent and the escrow state is the event that
+ * happened. Every path that hands over a wrapped data key consults this, so widening one
+ * of them cannot quietly widen the other.
+ */
+function vaultIsOpen(accessLevel: string, escrowState: string | null): boolean {
+  return accessLevel === 'vault' && escrowState === 'released';
 }
 
 /**
@@ -506,6 +540,11 @@ export function listEstates(ctx: AppContext, granteeUserId: string): EstateSumma
  * Separate from {@link listEstates} even though the list already carries the key, because
  * an audit row per *read* is what SECURITY-MODEL.md promises, and a list that is refreshed
  * by a polling UI would otherwise fill the log with noise that means nothing.
+ *
+ * Gated by {@link assertVaultReleased}, not by the escrow row alone. Reading the escrow on
+ * its own would answer a narrower question than the one being asked — "was this released"
+ * rather than "may this person open it" — and the two come apart the moment an owner seals
+ * to a `summary` heir or narrows a `vault` nomination after releasing it.
  */
 export function readEscrowKey(
   ctx: AppContext,
@@ -513,6 +552,8 @@ export function readEscrowKey(
   ownerUserId: string,
   ip: string | null,
 ): { wrappedDek: string; releasedAt: string } {
+  assertVaultReleased(ctx, granteeUserId, ownerUserId);
+
   const escrow = ctx.db
     .select()
     .from(vaultEscrow)
@@ -521,12 +562,9 @@ export function readEscrowKey(
     )
     .get();
 
+  // `assertVaultReleased` has already found a released escrow for this pair, so this is a
+  // consistency check rather than an access decision.
   if (!escrow) throw notFound('No escrow for that estate');
-  if (escrow.state !== 'released') {
-    // A 403 rather than a 404: this heir already knows the escrow exists — they were told
-    // so when they were named — and pretending otherwise would only confuse them.
-    throw forbidden('That vault has not been released');
-  }
 
   recordAudit(ctx, {
     actorUserId: granteeUserId,

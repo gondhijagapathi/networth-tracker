@@ -54,6 +54,11 @@ function yearsAgo(years: number): string {
   return date.toISOString().slice(0, 10);
 }
 
+/** The day after an ISO date, for checking an inclusive bound from both sides. */
+function addDay(iso: string): string {
+  return new Date(Date.parse(`${iso}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+}
+
 async function createAsset(
   client: TestClient,
   body: Record<string, unknown>,
@@ -515,6 +520,28 @@ describe('the net worth series', () => {
     const points = response.body.series as Array<{ netPaise: number }>;
     expect(points[0]!.netPaise).toBe(0);
     expect(points.at(-1)!.netPaise).toBe(1_00_000_00);
+  });
+
+  it('still counts an asset on the day it closed', async () => {
+    const closedOn = yearsAgo(1);
+    await createAsset(alice, {
+      name: 'Closed savings account',
+      type: 'bank_account',
+      status: 'closed',
+      openedOn: yearsAgo(3),
+      closedOn,
+      valuePaise: 1_00_000_00,
+      valueAsOf: yearsAgo(3),
+      detail: { accountType: 'savings' },
+    });
+
+    // The money was there on the closing date — it is the day it came back out. Both bounds
+    // are inclusive, so the asset counts on `closedOn` and not on the day after.
+    const onClosingDay = await alice.get(`/api/analytics/allocation?asOf=${closedOn}`);
+    expect(onClosingDay.body.allocation.totalPaise).toBe(1_00_000_00);
+
+    const dayAfter = await alice.get(`/api/analytics/allocation?asOf=${addDay(closedOn)}`);
+    expect(dayAfter.body.allocation.totalPaise).toBe(0);
   });
 
   it('refuses a window it will not compute', async () => {
