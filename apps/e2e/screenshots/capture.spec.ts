@@ -219,7 +219,7 @@ test('assets on a phone', async ({ page }) => {
 
 test('backup and restore', async ({ page }) => {
   await signIn(page);
-  await page.goto('/settings');
+  await page.goto('/admin');
   await expect(page.getByRole('heading', { name: 'Backup' })).toBeVisible();
   await page.getByLabel('Passphrase').first().fill('a-long-enough-backup-passphrase');
   await page.getByRole('button', { name: 'Back up now' }).click();

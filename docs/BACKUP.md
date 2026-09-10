@@ -19,7 +19,7 @@ the section entirely from a member. For one person's data in a portable format, 
 
 ## Taking a backup
 
-**From the UI:** Settings → Backup → *Back up now*. You are asked for a passphrase.
+**From the UI:** Administration → Backup → *Back up now*. You are asked for a passphrase.
 
 **From the CLI:** `npm run backup` (and `npm run backup:list` to see what is on disk).
 
@@ -69,7 +69,7 @@ all. `apps/api/src/lib/__tests__/bundle.test.ts` asserts this property against t
 
 ## Restoring
 
-**Settings → Restore.** You choose the file, type the passphrase, and type the word
+**Administration → Restore.** You choose the file, type the passphrase, and type the word
 `restore` — three separate acts, because this is the only control in the application that
 deletes other people's data.
 

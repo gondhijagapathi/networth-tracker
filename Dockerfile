@@ -63,9 +63,9 @@ FROM node:${NODE_VERSION}-bookworm-slim AS api
 ENV NODE_ENV=production \
     API_HOST=0.0.0.0 \
     API_PORT=4000 \
-    DATABASE_PATH=/var/lib/networth/networth.db \
-    UPLOAD_DIR=/var/lib/networth/uploads \
-    BACKUP_DIR=/var/lib/networth/backups
+    DATABASE_PATH=/data/networth.db \
+    UPLOAD_DIR=/data/uploads \
+    BACKUP_DIR=/data/backups
 
 WORKDIR /app
 
@@ -83,10 +83,11 @@ COPY --from=build /app/apps/api/dist ./apps/api/dist
 # plain .sql files at boot, so they are part of the runtime image, not just the build.
 COPY --from=build /app/apps/api/migrations ./apps/api/migrations
 
-# Created here, owned by `node`, so that Docker initialises a named volume mounted over it
-# with the same ownership. Without this the volume arrives owned by root and the server
-# cannot write its own database.
-RUN mkdir -p /var/lib/networth && chown -R node:node /var/lib/networth
+# The mount point for the host directory that holds the database, the uploads and the
+# backups. Compose bind-mounts over this and runs the container as the user who owns that
+# directory on the host, so the ownership here only matters if somebody runs the image with
+# no mount at all — in which case the data is ephemeral anyway.
+RUN mkdir -p /data && chown -R node:node /data
 
 USER node
 

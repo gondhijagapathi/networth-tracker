@@ -1,5 +1,5 @@
 /**
- * Administration — who may sign in.
+ * Administration — who may sign in, and the installation's backups.
  *
  * Note what this screen deliberately is not: a view of anybody's money. Admin here is an
  * operational role, and `routes/admin.ts` on the server has no endpoint that reads another
@@ -7,7 +7,9 @@
  * who wants to see a partner's net worth asks them for a household invite like anyone else.
  *
  * Two panels for the two questions an operator actually has: who is waiting for an account,
- * and who has one.
+ * and who has one. Backup and restore follow, in `components/BackupSection.tsx`: a bundle is
+ * every account on the server rather than one person's data, so it belongs to the operator
+ * and not to anybody's settings screen.
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -34,6 +36,7 @@ import {
   Select,
   Skeleton,
 } from '../components/ui.js';
+import { BackupSection } from '../components/BackupSection.js';
 import { endpoints } from '../lib/endpoints.js';
 import { formatDate } from '../lib/format.js';
 import { useSession } from '../lib/session.js';
@@ -88,12 +91,13 @@ export function Admin() {
     <div className="space-y-4">
       <PageHeader
         title="Administration"
-        subtitle="Who may sign in. Nothing on this page reads anyone’s assets."
+        subtitle="Who may sign in, and what this server keeps a copy of. Nothing here reads anyone’s assets."
       />
 
       <InvitesCard invites={invites} onChanged={() => void load()} />
       <PeopleCard users={users} currentUserId={user.id} onChanged={() => void load()} />
       <MailCard />
+      <BackupSection />
     </div>
   );
 }
