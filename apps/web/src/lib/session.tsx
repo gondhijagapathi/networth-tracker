@@ -28,6 +28,8 @@ interface SessionValue {
   /** True on a brand-new instance with no accounts yet: registration, not sign-in. */
   bootstrapRequired: boolean;
   login: (body: LoginBody) => Promise<void>;
+  /** Re-read the signed-in user, after something changed it — enrolling in 2FA, say. */
+  refresh: () => Promise<void>;
   register: (body: RegisterBody) => Promise<void>;
   logout: () => Promise<void>;
 }
@@ -80,6 +82,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setBootstrapRequired(false);
   }, []);
 
+  const refresh = useCallback(async () => {
+    const body = await api.get<{ user: PublicUser }>('/auth/me');
+    setUser(body.user);
+    setStatus('authenticated');
+  }, []);
+
   const logout = useCallback(async () => {
     try {
       await api.post('/auth/logout');
@@ -96,8 +104,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo<SessionValue>(
-    () => ({ status, user, bootstrapRequired, login, register, logout }),
-    [status, user, bootstrapRequired, login, register, logout],
+    () => ({ status, user, bootstrapRequired, login, register, refresh, logout }),
+    [status, user, bootstrapRequired, login, register, refresh, logout],
   );
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
