@@ -13,6 +13,7 @@ import type {
   AssetStatus,
   AssetSummary,
   AssetType,
+  BackfillSipBody,
   CreateAssetBody,
   CreateInstrumentBody,
   CreateTransactionBody,
@@ -124,6 +125,12 @@ export const endpoints = {
 
   addTransaction: (id: string, body: CreateTransactionBody) =>
     api.post<{ transaction: TransactionRecord }>(`/assets/${id}/transactions`, body),
+
+  backfillSip: (id: string, body: BackfillSipBody) =>
+    api.post<{ created: TransactionRecord[]; skipped: number }>(
+      `/assets/${id}/transactions/sip`,
+      body,
+    ),
 
   deleteTransaction: (id: string, transactionId: string) =>
     api.delete<void>(`/assets/${id}/transactions/${transactionId}`),

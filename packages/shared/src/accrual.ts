@@ -359,6 +359,25 @@ export function addMonths(iso: string, months: number): string {
   return target.toISOString().slice(0, 10);
 }
 
+/**
+ * Every occurrence of a day-of-month inside a window, earliest first.
+ *
+ * The anchor is that day in the month `from` falls in, pushed on a month when it already
+ * passed, so a window opening on the 20th does not invent an instalment on the 5th. Used
+ * by the due calendar and by the SIP backfill, which must agree about which dates a monthly
+ * standing instruction actually lands on.
+ */
+export function monthlyOn(day: number, from: string, to: string): string[] {
+  const first = `${from.slice(0, 7)}-${String(day).padStart(2, '0')}`;
+  const dates: string[] = [];
+
+  for (let cursor = first < from ? addMonths(first, 1) : first; cursor <= to;) {
+    dates.push(cursor);
+    cursor = addMonths(cursor, 1);
+  }
+  return dates;
+}
+
 function monthStart(iso: string): string {
   return `${iso.slice(0, 7)}-01`;
 }

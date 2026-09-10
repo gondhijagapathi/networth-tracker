@@ -9,6 +9,7 @@
 import { Router } from 'express';
 import {
   assetQuerySchema,
+  backfillSipSchema,
   createAssetSchema,
   createTransactionSchema,
   createValuationSchema,
@@ -25,6 +26,7 @@ import { assetPerformance } from '../services/analytics.service.js';
 import {
   addTransaction,
   archiveAsset,
+  backfillSip,
   createAsset,
   deleteTransaction,
   getAsset,
@@ -117,6 +119,16 @@ export function assetsRouter(ctx: AppContext): Router {
     const scope = resolveScope(ctx, requireAuthContext(req));
     const body = createTransactionSchema.parse(req.body);
     res.status(201).json({ transaction: addTransaction(ctx, scope, pathParam(req, 'id'), body) });
+  });
+
+  /**
+   * Fill in the months of a running SIP in one call, because nobody types forty-eight
+   * identical rows and the alternative — one lump sum — reports a return that is wrong.
+   */
+  router.post('/:id/transactions/sip', (req, res) => {
+    const scope = resolveScope(ctx, requireAuthContext(req));
+    const body = backfillSipSchema.parse(req.body);
+    res.status(201).json(backfillSip(ctx, scope, pathParam(req, 'id'), body));
   });
 
   router.patch('/:id/transactions/:transactionId', (req, res) => {

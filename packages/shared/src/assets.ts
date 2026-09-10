@@ -598,6 +598,32 @@ export const createTransactionSchema = z
   });
 export type CreateTransactionBody = z.infer<typeof createTransactionSchema>;
 
+/**
+ * Fill in the instalments of a standing monthly instruction that were never typed in.
+ *
+ * A SIP running for four years is forty-eight identical `sip` rows, and nobody enters those
+ * by hand — so without this the honest thing to record is one lump sum, which prices every
+ * instalment as if it were paid on the first day and reports an XIRR that is simply wrong.
+ * The window is closed at both ends and the instalment amount is one number, because a SIP
+ * whose amount changed half way through is two backfills, not a schedule with a history.
+ */
+export const backfillSipSchema = z
+  .object({
+    /** The instalment, not the total: what leaves the bank each month. */
+    amountPaise: nonNegativePaiseSchema.refine((value) => value > 0, 'Enter the monthly amount'),
+    /** Capped at 28 so the date exists in February, same as `sipDay`. */
+    day: z.number().int().min(1).max(28),
+    from: isoDateSchema,
+    /** Defaults to today on the server, which is the common case for a running SIP. */
+    to: isoDateSchema.optional(),
+    chargesPaise: nonNegativePaiseSchema.default(0),
+  })
+  .refine((body) => body.to === undefined || body.to >= body.from, {
+    message: 'The end date cannot be before the start',
+    path: ['to'],
+  });
+export type BackfillSipBody = z.infer<typeof backfillSipSchema>;
+
 export const updateTransactionSchema = z.object({
   date: isoDateSchema.optional(),
   type: transactionTypeSchema.optional(),

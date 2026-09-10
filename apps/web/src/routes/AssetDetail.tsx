@@ -11,7 +11,12 @@
 
 import { useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { formatRate, parseAmount, type TransactionType } from '@networth/shared';
+import {
+  formatRate,
+  parseAmount,
+  type HoldingDetail,
+  type TransactionType,
+} from '@networth/shared';
 import { DetailPanel } from '../components/assets/DetailPanel.js';
 import {
   Amount,
@@ -51,6 +56,7 @@ export function AssetDetail() {
 
   const [error, setError] = useState<ApiError | null>(null);
   const [busy, setBusy] = useState(false);
+  const [filled, setFilled] = useState<{ added: number; skipped: number } | null>(null);
 
   if (asset.error !== null) {
     return <ErrorNotice message={asset.error.message} onRetry={asset.reload} />;
@@ -121,6 +127,44 @@ export function AssetDetail() {
     }
   }
 
+  /**
+   * Write a running SIP's months in one go.
+   *
+   * Typing forty-eight identical instalments by hand is what stops people recording them at
+   * all, and a single lump-sum row prices every one of them as if it were paid on the first
+   * day — so the figure this replaces is not a rougher return, it is a wrong one.
+   */
+  async function fillSipMonths(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    setBusy(true);
+    setError(null);
+    setFilled(null);
+
+    try {
+      const to = String(data.get('sipTo') ?? '').trim();
+      const result = await endpoints.backfillSip(id, {
+        amountPaise: parseAmount(String(data.get('sipAmount') ?? '')),
+        day: Number(data.get('sipDay') ?? 1),
+        from: String(data.get('sipFrom') ?? ''),
+        // An empty end date means "still running", which the server reads as today.
+        to: to === '' ? undefined : to,
+        chargesPaise: 0,
+      });
+      setFilled({ added: result.created.length, skipped: result.skipped });
+      reloadAll();
+    } catch (caught) {
+      setError(
+        caught instanceof ApiError
+          ? caught
+          : new ApiError(0, { code: 'bad_request', message: 'That amount could not be read.' }),
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function archive() {
     // Archive, not delete: the valuations and transactions outlive the asset, because last
     // year's net worth was true and a closed deposit is part of it.
@@ -131,6 +175,8 @@ export function AssetDetail() {
 
   const entry = performance.data?.performance ?? null;
   const latest = record.latestValue;
+  // Only a fund or share has monthly instalments to fill in, and only its owner may write.
+  const sip = record.type === 'holding' && !record.shared ? (record.detail as HoldingDetail) : null;
 
   return (
     <div className="space-y-4">
@@ -288,6 +334,54 @@ export function AssetDetail() {
           </ul>
         )}
       </Card>
+
+      {sip !== null && (
+        <Card>
+          <CardTitle>Fill in SIP months</CardTitle>
+          <p className="mb-3 text-sm" style={{ color: 'var(--text-secondary)' }}>
+            Adds one instalment per month between these dates, so a SIP does not have to be typed in
+            a month at a time. Months already recorded are left alone.
+          </p>
+          <form onSubmit={(event) => void fillSipMonths(event)} className="flex flex-wrap gap-3">
+            <Field label="Monthly amount">
+              <Input
+                name="sipAmount"
+                required
+                inputMode="decimal"
+                placeholder="5,000"
+                defaultValue={sip.sipAmountPaise === undefined ? '' : sip.sipAmountPaise / 100}
+              />
+            </Field>
+            <Field label="Day of month" hint="1–28">
+              <Input
+                name="sipDay"
+                type="number"
+                min={1}
+                max={28}
+                required
+                defaultValue={sip.sipDay ?? 5}
+              />
+            </Field>
+            <Field label="First instalment">
+              <Input name="sipFrom" type="date" required defaultValue={record.openedOn ?? ''} />
+            </Field>
+            <Field label="Last instalment" hint="Leave blank if it is still running">
+              <Input name="sipTo" type="date" />
+            </Field>
+            <div className="self-end pb-0.5">
+              <Button type="submit" variant="primary" disabled={busy}>
+                {busy ? 'Adding…' : 'Add months'}
+              </Button>
+            </div>
+          </form>
+          {filled !== null && (
+            <p className="mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>
+              {`Added ${filled.added} instalment${filled.added === 1 ? '' : 's'}`}
+              {filled.skipped > 0 && `, left ${filled.skipped} already recorded alone`}.
+            </p>
+          )}
+        </Card>
+      )}
 
       <Card>
         <CardTitle>Transactions</CardTitle>
