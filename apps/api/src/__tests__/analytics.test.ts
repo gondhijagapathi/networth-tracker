@@ -76,6 +76,11 @@ async function dashboardOf(client: TestClient, query = ''): Promise<DashboardRes
   return response.body as DashboardResponse;
 }
 
+/** The invested figure of the first performance row, which is all one test below needs. */
+function investedOf(response: { body: { assets: Array<{ investedPaise: number }> } }): number {
+  return response.body.assets[0]!.investedPaise;
+}
+
 /** Insert a grant directly: the flows that create these arrive in P5 and P6. */
 function grant(scope: AccessScope): void {
   instance.ctx.db
@@ -606,6 +611,70 @@ describe('performance', () => {
     expect(entry.cagr).not.toBeNull();
 
     expect(response.body.portfolio.xirr).toBeGreaterThan(0.09);
+  });
+
+  it('takes a fund cost basis from what its units cost, not from what it is worth', async () => {
+    const instrument = await alice.post('/api/instruments', {
+      kind: 'mf',
+      name: 'Monthly SIP Fund',
+      amfiSchemeCode: '888888',
+    });
+
+    // 1,000 units that cost ₹100 each, worth ₹1,35,000 today. Without the cost basis the
+    // only dated figure on file is the opening valuation, which makes the money put in
+    // equal what it is worth and reports a gain of zero on a fund that has made 35%.
+    await createAsset(alice, {
+      name: 'Monthly SIP fund',
+      type: 'holding',
+      openedOn: yearsAgo(1),
+      valuePaise: 1_35_000_00,
+      valueAsOf: TODAY,
+      detail: {
+        instrumentId: instrument.body.instrument.id as string,
+        units: 1_000_000_000,
+        avgCostMicro: 100_000_000,
+      },
+    });
+
+    const response = await alice.get('/api/analytics/performance');
+    expect(response.status).toBe(200);
+
+    const entry = response.body.assets[0];
+    expect(entry.investedPaise).toBe(1_00_000_00);
+    expect(entry.valuePaise).toBe(1_35_000_00);
+    expect(entry.gainPaise).toBe(35_000_00);
+    expect(entry.xirr).toBeGreaterThan(0.3);
+  });
+
+  it('prefers the instalments actually recorded to a fund cost basis', async () => {
+    const instrument = await alice.post('/api/instruments', {
+      kind: 'mf',
+      name: 'Recorded SIP Fund',
+      amfiSchemeCode: '777777',
+    });
+
+    const asset = await createAsset(alice, {
+      name: 'Recorded SIP fund',
+      type: 'holding',
+      openedOn: yearsAgo(1),
+      valuePaise: 1_35_000_00,
+      valueAsOf: TODAY,
+      detail: {
+        instrumentId: instrument.body.instrument.id as string,
+        units: 1_000_000_000,
+        avgCostMicro: 100_000_000,
+      },
+    });
+
+    const paid = await alice.post(`/api/assets/${asset.id}/transactions`, {
+      date: yearsAgo(1),
+      type: 'sip',
+      amountPaise: 1_20_000_00,
+    });
+    expect(paid.status).toBe(201);
+
+    // The instalment is what really happened; the cost basis is only a stand-in for it.
+    expect(investedOf(await alice.get('/api/analytics/performance'))).toBe(1_20_000_00);
   });
 
   it('has no rate to report for something bought today', async () => {

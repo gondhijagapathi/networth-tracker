@@ -246,4 +246,20 @@ Deliberately not in this phase:
 - **Cross-browser E2E.** One browser. Three would triple the runtime to re-test the same
   server, and the engine differences that remain are not what this suite is for.
 
+## Funds and shares are entered as money, not as units
+
+- **A fund's cost basis is its units times their average cost**, and only falls back to the
+  first valuation when no cost is on file. It used to fall straight to that valuation, which
+  meant the money put in equalled what the fund was worth and every holding reported a gain
+  of exactly zero — the one number a tracker exists to produce.
+- **The add-a-fund form asks how the money went in**, in rupees and dates: a monthly SIP with
+  its amount, debit day and window, or a single payment. It writes the instalments through
+  the same backfill the fund's own page uses, so the return is computed from when each
+  instalment was really paid. Units and an average NAV are what a statement reports, not what
+  a household knows, so the average cost is now derived from money in divided by units held
+  rather than typed in.
+- **Units became optional.** Somebody who knows only what the statement is worth today still
+  gets a fund; a blank is zero units, and the value comes from the figure they entered rather
+  than from a price nobody can compute.
+
 ---

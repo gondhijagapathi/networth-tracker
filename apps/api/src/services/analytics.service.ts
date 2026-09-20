@@ -29,6 +29,7 @@ import {
   delta,
   isLiabilityType,
   scheduleContributions,
+  valueOf,
   xirr,
   type AllocationQuery,
   type AllocationResponse,
@@ -552,6 +553,16 @@ export function cashflows(facts: AssetFacts, data: PortfolioData, asOf: string):
       },
       asOf,
     ).map((contribution) => ({ date: contribution.date, amount: -contribution.amountPaise }));
+  }
+
+  // A fund or share whose instalments were never typed in still cost what its units cost.
+  // Without this it falls to the valuation below, which reads today's worth as the money
+  // put in — so every SIP shows an invested figure equal to its value and a gain of zero.
+  if (facts.holding && facts.holding.units > 0 && facts.holding.avgCostMicro > 0) {
+    const paidOn = facts.asset.openedOn ?? facts.beganOn;
+    if (paidOn <= asOf) {
+      return [{ date: paidOn, amount: -valueOf(facts.holding.units, facts.holding.avgCostMicro) }];
+    }
   }
 
   const first = firstValuation(data, facts.asset.id);

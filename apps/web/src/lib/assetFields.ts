@@ -120,12 +120,24 @@ export const DETAIL_FIELDS: Record<AssetType, FieldSpec[]> = {
 
   holding: [
     // The instrument is picked with a search box rather than typed, so it is not a spec.
-    { name: 'units', label: 'Units', kind: 'micro', required: true, hint: 'Up to six decimals' },
-    { name: 'avgCostMicro', label: 'Average cost per unit', kind: 'micro', hint: 'In rupees' },
+    // Units are not required: an investor who knows only what the statement is worth today
+    // should still be able to record the fund, and a blank becomes zero rather than an error.
+    {
+      name: 'units',
+      label: 'Units you hold now',
+      kind: 'micro',
+      hint: 'From your latest statement. Leave blank if you do not know.',
+    },
+    {
+      name: 'avgCostMicro',
+      label: 'Average cost per unit',
+      kind: 'micro',
+      hint: 'Rupees per unit. Leave blank and it is worked out from what you put in.',
+    },
     t('folioNumber', 'Folio number', { hint: MASKED }),
     t('dematAccount', 'Demat account', { hint: MASKED }),
-    money('sipAmountPaise', 'SIP amount'),
-    { name: 'sipDay', label: 'SIP date', kind: 'integer', hint: '1–28' },
+    money('sipAmountPaise', 'Monthly SIP amount'),
+    { name: 'sipDay', label: 'SIP debit day', kind: 'integer', hint: '1–28' },
   ],
 
   insurance_policy: [
