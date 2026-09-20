@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.1] — 2026-09-20
+
 ### Added
 
 - **Fill in SIP months.** A running SIP is one identical transaction a month, and nobody
@@ -46,6 +48,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   user and carries a healthcheck against `/api/health`.
 
 ### Fixed
+
+- A fund with no recorded purchases took its first valuation as the money that went into
+  it, so the invested figure equalled what the holding was worth and every such fund
+  reported a gain of exactly zero. The cost basis is now units times their average cost,
+  dated from when the asset opened; the valuation fallback survives only for a holding that
+  has no cost on file at all, and recorded transactions still win over both. The
+  capital-gains estimate reads the same cashflows, so the same change corrects it. Existing
+  holdings that carry an average cost will report a different invested figure, because the
+  old one was wrong.
+- Adding a fund asked for units and an average cost per unit — two numbers an owner has to
+  work out — and recorded the whole investment as a single lump sum, which priced every
+  instalment of a SIP as if it had been paid on day one. The form now asks how the money
+  actually went in, in rupees and dates: a monthly SIP with its amount, debit day and
+  window, or a single payment. It totals the amount while it is typed and writes the
+  instalments through the same backfill the fund's own page uses, so the return is computed
+  from when each instalment was really paid. Units became optional and the average cost per
+  unit is no longer asked for: it is derived from money in divided by units held.
 
 - `COOKIE_SECURE=false` was read as **true**. The variable was parsed with
   `z.coerce.boolean()`, which is `Boolean(value)` — under which every non-empty string,
