@@ -36,6 +36,13 @@ const NOMINEE = {
 const VAULT_PASSPHRASE = 'the-vault-passphrase-is-long';
 const BACKUP_PASSPHRASE = 'the-backup-passphrase-is-long';
 
+/** A year back from today, for a SIP that has been running a while. */
+function aYearAgo(): string {
+  const date = new Date();
+  date.setUTCFullYear(date.getUTCFullYear() - 1);
+  return date.toISOString().slice(0, 10);
+}
+
 /** Shared across the whole file: this is one journey, not a dozen independent cases. */
 let netWorthBefore: string;
 let nomineeInviteCode: string;
@@ -99,10 +106,21 @@ test('a fixed deposit, a plot of land and a fund holding go in', async ({ page }
   // The picker collapses to the chosen scheme, and the page has not navigated away.
   await expect(page.getByRole('button', { name: 'Change' })).toBeVisible();
   await expect(page).toHaveURL(/\/assets\/new$/);
-  await page.getByLabel('Units').fill('120.5');
-  await page.getByLabel('Average cost').fill('61.2');
+  await page.getByLabel('Units you hold now').fill('120.5');
+  // The fund is entered the way a household holds one: ₹5,000 a month since last year,
+  // in rupees and dates. The form writes the instalments behind it, which is what lets the
+  // fund report a gain instead of an invested figure equal to what it is worth today.
+  await page.getByLabel('Amount each month').fill('5,000');
+  await page.getByLabel('Day it is debited').fill('5');
+  await page.getByLabel('First instalment').fill(aYearAgo());
+  await expect(page.getByText(/Put in so far/)).toBeVisible();
   await page.getByRole('button', { name: 'Add asset' }).click();
   await expect(page).toHaveURL(/\/assets\/[0-9a-f-]+$/);
+
+  // Every instalment landed as its own dated row, so the return is a question about when
+  // each one was paid rather than about one lump sum.
+  await expect(page.getByText('Invested')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Fill in SIP months' })).toBeVisible();
 
   await page.goto('/assets');
   await expect(page.getByText('SBI Fixed Deposit')).toBeVisible();

@@ -12,9 +12,12 @@
  */
 
 import { useMemo, useState, type FormEvent } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   ASSET_TYPES,
+  formatINR,
+  fromMicro,
+  monthlyOn,
   parseAmount,
   type AssetRecord,
   type AssetType,
@@ -74,6 +77,50 @@ export function AssetForm({ mode }: { mode: 'create' | 'edit' }) {
 
 type Values = Record<string, string | boolean>;
 
+/**
+ * How the money went into a fund or share.
+ *
+ * Asked as money and dates rather than as units and an average NAV, because that is what a
+ * household knows: "five thousand on the 5th since April 2022" is on the bank statement,
+ * and "1,234.567 units at ₹97.20" is a figure somebody would have to work out. The form
+ * turns the first into the second — and into the instalments the return is computed from.
+ */
+interface Invest {
+  how: 'sip' | 'lump' | 'none';
+  /** The monthly instalment for a SIP, the whole payment for a one-off purchase. */
+  amount: string;
+  day: string;
+  /** The first instalment for a SIP, the purchase date for a one-off. */
+  from: string;
+  /** Blank means the SIP is still running, which the server reads as today. */
+  to: string;
+}
+
+const EMPTY_INVEST: Invest = { how: 'sip', amount: '', day: '5', from: '', to: '' };
+
+/** The dates a SIP debits on, so the form can total it before the server writes the rows. */
+function instalmentDates(invest: Invest): string[] {
+  if (invest.from === '') return [];
+  const to = invest.to.trim() === '' ? new Date().toISOString().slice(0, 10) : invest.to.trim();
+  return monthlyOn(Number(invest.day || 1), invest.from, to);
+}
+
+/**
+ * What has gone in so far, in paise. Zero whenever the answer is not yet known — a blank
+ * amount, an unreadable one, or "I will add it later".
+ */
+function contributedPaise(invest: Invest): number {
+  const amount = invest.amount.trim();
+  if (invest.how === 'none' || amount === '' || invest.from === '') return 0;
+  try {
+    const each = parseAmount(amount);
+    return invest.how === 'lump' ? each : each * instalmentDates(invest).length;
+  } catch {
+    // The amount is half typed. The hint simply does not appear yet.
+    return 0;
+  }
+}
+
 function Editor({
   mode,
   record,
@@ -89,8 +136,15 @@ function Editor({
   const [busy, setBusy] = useState(false);
 
   const [values, setValues] = useState<Values>(() => initialValues(record, type));
+  const [invest, setInvest] = useState<Invest>(EMPTY_INVEST);
+  /** Set when the asset saved but its instalments did not, which is not a failed save. */
+  const [partial, setPartial] = useState<{ assetId: string; message: string } | null>(null);
 
-  const detailSpecs = useMemo(() => specsFor(type, values), [type, values]);
+  // A new fund or share asks about money and dates in its own card, so the unit-level
+  // fields those answers produce are not also asked for as raw numbers.
+  const newHolding = type === 'holding' && mode === 'create';
+
+  const detailSpecs = useMemo(() => specsFor(type, values, newHolding), [type, values, newHolding]);
 
   function set(name: string, value: string | boolean) {
     setValues((previous) => ({ ...previous, [name]: value }));
@@ -120,6 +174,26 @@ function Editor({
 
     try {
       const detail = buildDetail(type, detailSpecs, values, instrument, record);
+      const contributed = contributedPaise(invest);
+
+      if (newHolding) {
+        // Units are optional here — somebody who only knows what the statement is worth
+        // today still gets a fund — and the column is not.
+        detail.units ??= 0;
+
+        if (invest.how === 'sip' && invest.amount.trim() !== '') {
+          detail.sipAmountPaise = parseAmount(invest.amount);
+          detail.sipDay = Number(invest.day || 5);
+        }
+
+        // Average cost is derived rather than asked for: money in divided by units held is
+        // the same number, and it is the one the owner can actually check.
+        const units = fromMicro(Number(detail.units));
+        if (contributed > 0 && units > 0) {
+          detail.avgCostMicro = microRupeesFromRupees(contributed / 100 / units);
+        }
+      }
+
       const base = {
         name: String(values.name ?? '').trim(),
         institution: String(values.institution ?? '').trim() || undefined,
@@ -130,7 +204,9 @@ function Editor({
         // Ownership is entered as a percentage and stored in basis points, so a 33.33%
         // split survives as an integer rather than a float that cannot add back to 100.
         ownershipBps: Math.round(Number(values.ownershipBps || 100) * 100),
-        openedOn: String(values.openedOn ?? '') || undefined,
+        // A fund whose first instalment is known began then, whatever the date box says.
+        openedOn:
+          String(values.openedOn ?? '') || (newHolding ? invest.from || undefined : undefined),
         notes: String(values.notes ?? '').trim() || undefined,
       };
 
@@ -151,6 +227,21 @@ function Editor({
         } as unknown as CreateAssetBody;
 
         const created = await endpoints.createAsset(body);
+
+        if (newHolding && contributed > 0) {
+          const written = await recordContributions(created.asset.id, invest);
+          if (!written) {
+            // The asset exists, so resubmitting would add a second one. Say what is missing
+            // and hand over a link instead of pretending the save failed.
+            setPartial({
+              assetId: created.asset.id,
+              message:
+                'The fund was saved, but its instalments were not. Open it and use “Fill in SIP months”.',
+            });
+            return;
+          }
+        }
+
         onDone(created.asset.id);
       } else {
         const updated = await endpoints.updateAsset(record!.id, { ...base, detail });
@@ -184,6 +275,17 @@ function Editor({
       />
 
       {error !== null && error.details._ !== undefined && <ErrorNotice message={error.message} />}
+
+      {partial !== null && (
+        <Card>
+          <p className="text-sm" style={{ color: 'var(--color-warn)' }}>
+            {partial.message}
+          </p>
+          <Link to={`/assets/${partial.assetId}`} className="btn btn-primary mt-3">
+            Open the fund
+          </Link>
+        </Card>
+      )}
 
       <Card>
         <CardTitle>The basics</CardTitle>
@@ -265,6 +367,8 @@ function Editor({
         </Card>
       )}
 
+      {newHolding && <InvestCard invest={invest} onChange={setInvest} />}
+
       <Card>
         <CardTitle>{ASSET_TYPE_LABELS[type]} details</CardTitle>
         <div className="grid gap-4 sm:grid-cols-2">
@@ -284,7 +388,14 @@ function Editor({
         <Card>
           <CardTitle>What is it worth today?</CardTitle>
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Value" hint="Optional — deposits and funds are computed for you.">
+            <Field
+              label="Value"
+              hint={
+                newHolding
+                  ? "Today's worth from your statement. Leave blank if you gave the units — the NAV prices it."
+                  : 'Optional — deposits are computed for you.'
+              }
+            >
               <Input
                 value={String(values.valuePaise ?? '')}
                 onChange={(event) => set('valuePaise', event.target.value)}
@@ -322,6 +433,138 @@ function Editor({
         </Button>
       </div>
     </form>
+  );
+}
+
+/**
+ * Write what went in, as the instalments or the single purchase it actually was.
+ *
+ * Returns false instead of throwing. By the time this runs the asset exists, so a failure
+ * is a real asset missing its history rather than a save that did not happen, and the two
+ * want different words on screen.
+ */
+async function recordContributions(assetId: string, invest: Invest): Promise<boolean> {
+  try {
+    if (invest.how === 'sip') {
+      await endpoints.backfillSip(assetId, {
+        amountPaise: parseAmount(invest.amount),
+        day: Number(invest.day || 5),
+        from: invest.from,
+        to: invest.to.trim() === '' ? undefined : invest.to.trim(),
+        chargesPaise: 0,
+      });
+    } else {
+      await endpoints.addTransaction(assetId, {
+        date: invest.from,
+        type: 'buy',
+        amountPaise: parseAmount(invest.amount),
+        chargesPaise: 0,
+        units: undefined,
+        priceMicro: undefined,
+        notes: undefined,
+      });
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * What went into a fund, asked in rupees.
+ *
+ * The instalments this produces are the whole reason a SIP can show a gain at all: without
+ * them the only figure on file is what the fund is worth today, and a cost basis taken from
+ * that says every fund has made exactly nothing.
+ */
+function InvestCard({ invest, onChange }: { invest: Invest; onChange: (next: Invest) => void }) {
+  const contributed = contributedPaise(invest);
+  const months = invest.how === 'sip' ? instalmentDates(invest).length : 0;
+
+  return (
+    <Card>
+      <CardTitle>How much have you put in?</CardTitle>
+      <p className="mb-3 text-sm" style={{ color: 'var(--text-secondary)' }}>
+        The money you paid, not what it is worth now. Those two are asked separately so the fund can
+        show a profit or a loss.
+      </p>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field label="How do you invest">
+          <Select
+            value={invest.how}
+            onChange={(event) => onChange({ ...invest, how: event.target.value as Invest['how'] })}
+          >
+            <option value="sip">Every month, by SIP</option>
+            <option value="lump">One payment</option>
+            <option value="none">I will add this later</option>
+          </Select>
+        </Field>
+
+        {invest.how === 'sip' && (
+          <>
+            <Field label="Amount each month" hint="₹5,000 · 5000">
+              <Input
+                value={invest.amount}
+                onChange={(event) => onChange({ ...invest, amount: event.target.value })}
+                inputMode="decimal"
+                placeholder="5,000"
+              />
+            </Field>
+            <Field label="Day it is debited" hint="1–28">
+              <Input
+                type="number"
+                min={1}
+                max={28}
+                value={invest.day}
+                onChange={(event) => onChange({ ...invest, day: event.target.value })}
+              />
+            </Field>
+            <Field label="First instalment">
+              <Input
+                type="date"
+                value={invest.from}
+                onChange={(event) => onChange({ ...invest, from: event.target.value })}
+              />
+            </Field>
+            <Field label="Last instalment" hint="Leave blank if it is still running">
+              <Input
+                type="date"
+                value={invest.to}
+                onChange={(event) => onChange({ ...invest, to: event.target.value })}
+              />
+            </Field>
+          </>
+        )}
+
+        {invest.how === 'lump' && (
+          <>
+            <Field label="Amount paid" hint="₹5,00,000 · 12.5L">
+              <Input
+                value={invest.amount}
+                onChange={(event) => onChange({ ...invest, amount: event.target.value })}
+                inputMode="decimal"
+                placeholder="1,00,000"
+              />
+            </Field>
+            <Field label="Bought on">
+              <Input
+                type="date"
+                value={invest.from}
+                onChange={(event) => onChange({ ...invest, from: event.target.value })}
+              />
+            </Field>
+          </>
+        )}
+      </div>
+
+      {contributed > 0 && (
+        <p className="mt-3 text-sm" style={{ color: 'var(--text-secondary)' }}>
+          Put in so far: <strong>{formatINR(contributed, { paise: false })}</strong>
+          {months > 0 && ` · ${months} instalment${months === 1 ? '' : 's'}`}
+        </p>
+      )}
+    </Card>
   );
 }
 
@@ -384,11 +627,17 @@ function SpecField({
 /* -------------------------------------------------------------------------- */
 
 /** The fields on show, which for the long tail depend on the kind chosen. */
-function specsFor(type: AssetType, values: Values): FieldSpec[] {
+function specsFor(type: AssetType, values: Values, newHolding = false): FieldSpec[] {
   const base = DETAIL_FIELDS[type].filter((spec) => {
     if (spec.onlyWhen === undefined) return true;
     return spec.onlyWhen.equals.includes(String(values[spec.onlyWhen.field] ?? ''));
   });
+
+  // A new fund gets its SIP and its cost basis from the money card, so asking for them
+  // again — as an average NAV and a monthly amount — is the confusion this removes.
+  if (newHolding) {
+    return base.filter((spec) => !['avgCostMicro', 'sipAmountPaise', 'sipDay'].includes(spec.name));
+  }
 
   if (type !== 'other_asset') return base;
   const kind = String(values.kind ?? 'crypto');
